@@ -115,8 +115,23 @@ milestone, not block all other work on it.
 - **FastAPI** `POST /query`, streaming the agent trace (plan/grading/retrieval/verification steps,
   not just the final answer) via Server-Sent Events — doubles as a stronger interview demo and as
   the natural hook for evaluation tracing.
-- Minimal **Gradio** demo UI (same tool already used in `enterprise-rag-platform`, no new
-  dependency to justify) for live walkthroughs — not a production UI.
+- **Demo UI lives in this repo, not `enterprise-rag-platform`**, deliberately: this project
+  consumes the RAG platform as a decoupled service over MCP, and the two systems staying
+  independently deployable (not merged into one UI) is itself part of what the project
+  demonstrates. Two tabs:
+  - **Tab 1 — Direct RAG**: calls `enterprise-rag-platform`'s plain query endpoint directly, shows
+    the single-pass answer with no correction loop.
+  - **Tab 2 — Agentic RAG**: the same question through the full
+    Gatekeeper→Research→Writer→Verifier flow, streaming each step live via the SSE endpoint above.
+  - Side-by-side, this *is* the answer to "what does agentic add over plain RAG" — shown, not
+    explained.
+  - MVP: minimal **Gradio** app (same tool already used in `enterprise-rag-platform`, no new
+    dependency to justify), rendering the live trace as a step-by-step text/card log (e.g.
+    "Gatekeeper: KB evidence sufficient → Research: semantic search → Verifier: grounded ✓").
+  - **Stretch goal, not MVP**: an animated flow-diagram view (nodes lighting up as each agent
+    runs) — Gradio doesn't support custom graph animation well, so this would mean a small custom
+    HTML/JS front-end instead. Revisit only once the core system works; do not let this block or
+    scope-creep the MVP.
 - **Ollama** for local/free LLM inference, matching the RAG platform's stack and this portfolio's
   zero-cost constraint.
 - Deployment follows the shared portfolio pattern in `D:\github-projects\infrastructure-options.md`
