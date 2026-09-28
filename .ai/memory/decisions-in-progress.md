@@ -5,34 +5,31 @@ Once a decision is made, remove it from here and write it up in `.ai/adr/`.
 
 ## Open
 
-- **Target role/interview type**: is this project aimed at an AI/ML engineer role (deep agent
-  architecture questions expected — tool-calling, memory, planning/ReAct, multi-agent
-  orchestration, evaluation), a general backend/software engineer role (agentic AI as one topic
-  among several), or a more specialized LLM/applied-AI research role? Changes how deep vs. broad
-  the project needs to go.
-- **Framework vs. from-scratch**: use an existing agent framework (LangGraph, CrewAI, AutoGen,
-  etc.) to demonstrate familiarity with what's actually used in industry, or build core agent loop
-  primitives from scratch to demonstrate first-principles understanding (often stronger for
-  interviews, since it proves understanding rather than library usage)? Possibly both, at
-  different depths.
-- **Scope/use case**: no specific application domain has been chosen (the earlier
-  "Agentic Insurance Assistant" framing was explicitly dropped in the sibling RAG repo's own
-  history — insurance-domain framing removed in favor of "general-purpose", scope otherwise
-  undecided). Needs a concrete first use case to build against, even if the deeper goal is
-  demonstrating fundamentals rather than solving that specific problem.
+- **ERP-112 sequencing**: whether `enterprise-rag-platform`'s Langfuse integration ticket
+  (currently Backlog) is completed before this project's evaluation milestone, or whether this
+  project stands up the shared Langfuse account itself if ERP-112 is still pending when
+  implementation reaches that point. Deferred to implementation planning
+  (`docs/superpowers/specs/2026-09-28-agentic-rag-orchestration-design.md`, "Open Items").
+- **MCP tool server location**: whether the MCP server wrapping `enterprise-rag-platform`'s
+  retrieval API lives in this repo or is contributed back to `enterprise-rag-platform` as a
+  reusable interface. Leaning toward this repo; final call at planning time.
+- **Fixture knowledge base content**: what small, synthetic KB to use for integration/eval tests
+  (not the RAG platform's real indexed documents) — not yet designed.
+
+## Resolved (2026-09-28)
+
+The three questions previously open here — target role/interview type, framework-vs-from-scratch,
+and concrete use case/scope — were resolved in the 2026-09-28 brainstorming session. See
+`docs/superpowers/specs/2026-09-28-agentic-rag-orchestration-design.md` for the full design and
+`.ai/sessions/2026-09-28-agentic-rag-brainstorming.md` for the decision trail (including two use-case
+pivots before landing on the final scope).
 
 ## Context Carried Over From `enterprise-rag-platform`
 
-- Purpose (confirmed by user, 2026-09-28): **interview preparation** — the project should
-  demonstrate the fundamentals of agentic AI thoroughly enough to support technical interview
-  discussion, not solve a novel business problem.
 - Cross-project infra reference: `D:\github-projects\infrastructure-options.md` (see
   `enterprise-rag-platform`'s ADR-008) tracks hosting/compute/database/GPU/LLM-API options
   evaluated against a "live 2-3 months, then torn down" constraint shared by this project too —
   reference it rather than re-deriving hosting decisions from scratch.
-- `enterprise-rag-platform`'s `docs/architecture.md` (2026-09-06 note) flags that a future
-  **LLMOps & Evaluation Platform** project is meant to be a standalone, generalized platform other
-  projects (including this one) integrate with as a client for tracing/evaluation, rather than each
-  project rolling its own. Worth keeping in mind when this project's own evaluation/observability
-  approach is designed — may be scoped as a stub/interim solution if LLMOps doesn't exist yet by
-  the time this needs it.
+- `enterprise-rag-platform`'s `ERP-112` (Langfuse integration, Backlog) is the source of the
+  shared Langfuse Cloud account this project's evaluation layer depends on — see ERP-112 sequencing
+  above.
