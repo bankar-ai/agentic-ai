@@ -49,7 +49,7 @@ and a graph-based orchestrator rather than one tool-calling agent.
 | Agent | Responsibility | Notes |
 |---|---|---|
 | **Gatekeeper / Retrieval-Grader** | Grades retrieved evidence quality/relevance. Decides: answer from trusted KB, fall back to web search (flagged as external, per CRAG), or refuse outright. | The guardrail — decides what gets answered at all. |
-| **Research** | Retrieves evidence. Chooses retrieval strategy (keyword / semantic / chunk-level, each exposed as a distinct MCP tool against `enterprise-rag-platform`), per the A-RAG finding that strategy choice (not just flat retrieval) meaningfully improves accuracy. Falls back to web search only when the Gatekeeper flags KB evidence as insufficient. | Multi-strategy retrieval is exposed as separate tools, not a single opaque "search" call. |
+| **Research** | Retrieves evidence via a single MCP tool wrapping `enterprise-rag-platform`'s real `POST /retrieval/query` endpoint (hybrid FAISS+BM25, fused — the platform does not expose separable keyword/semantic/chunk-level strategies, so this project does not pretend it does). Can vary `top_k`, `rerank`, and `expand_sections` per call based on the Gatekeeper's confidence signal. Falls back to web search only when the Gatekeeper flags KB evidence as insufficient. | Corrected 2026-09-28: the spec originally assumed 3 separate strategy tools per the general A-RAG research finding; verified against the actual platform code and corrected to 1 real tool with real parameters, rather than inventing a distinction the platform doesn't support. |
 | **Writer** | Synthesizes a cited answer from gathered evidence. Preserves source labeling (trusted KB vs. flagged external) in the output — never presents web-fallback evidence as if it were KB-grounded. | |
 | **Verifier** | Checks each claim in the draft against retrieved sources (groundedness check, Self-RAG-style reflection). Unsupported claims trigger a loop back to Research; exhausted retries trigger refusal rather than shipping an ungrounded answer. | |
 
@@ -57,7 +57,7 @@ and a graph-based orchestrator rather than one tool-calling agent.
 
 ```
 query -> Gatekeeper (grade initial retrieval)
-           |- sufficient KB evidence -> Research (multi-strategy KB retrieval) -> Writer
+           |- sufficient KB evidence -> Research (KB retrieval via MCP, tuned top_k/rerank) -> Writer
            |- insufficient -> Research (web fallback, flagged) -> Writer
            `- out of scope / low confidence -> refuse (no Writer call)
 
@@ -77,10 +77,27 @@ target role's JDs.
 
 ## Protocols
 
-- **MCP**: `enterprise-rag-platform`'s retrieval API is exposed as an MCP tool server, with
-  keyword/semantic/chunk-level retrieval as distinct tools.
+- **MCP**: `enterprise-rag-platform`'s real `POST /retrieval/query` endpoint (see `app/retrieval/router.py`,
+  `app/retrieval/schemas.py` in that repo) exposed as a single MCP tool, taking `query`, `top_k`,
+  `rerank`, `expand_sections`, `document_ids` and returning ranked `RetrievedChunk` results
+  (chunk text, document/section provenance, fused relevance score).
 - **A2A-style handoff**: structured (Pydantic) messages between Gatekeeper -> Research -> Writer
   -> Verifier, carrying evidence, confidence scores, and source labels — not raw text.
+
+### Authentication to `enterprise-rag-platform`
+
+That platform requires a JWT (via `POST /auth/login`) for every retrieval call — there is no
+API-key/service-account mechanism, and results are scoped to the calling user's own ingested
+documents (see `app/auth/router.py`, `app/auth/dependencies.py` in that repo). This project
+therefore needs:
+
+- A dedicated user registered in `enterprise-rag-platform` (via `POST /auth/register`) that owns
+  the documents this project's demos query against.
+- The MCP tool server holds that user's access/refresh token pair, refreshing via
+  `POST /auth/refresh` when the access token expires, rather than re-logging-in per call.
+- Credentials (that user's email/password, or the long-lived refresh token) stored per this
+  portfolio's existing convention, `D:\github-projects\credentials-policy.md` — never hardcoded,
+  never committed.
 
 ## Evaluation
 
@@ -127,7 +144,7 @@ milestone, not block all other work on it.
     explained.
   - MVP: minimal **Gradio** app (same tool already used in `enterprise-rag-platform`, no new
     dependency to justify), rendering the live trace as a step-by-step text/card log (e.g.
-    "Gatekeeper: KB evidence sufficient → Research: semantic search → Verifier: grounded ✓").
+    "Gatekeeper: KB evidence sufficient → Research: KB retrieval (top_k=8, rerank) → Verifier: grounded ✓").
   - **Stretch goal, not MVP**: an animated flow-diagram view (nodes lighting up as each agent
     runs) — Gradio doesn't support custom graph animation well, so this would mean a small custom
     HTML/JS front-end instead. Revisit only once the core system works; do not let this block or
@@ -140,8 +157,8 @@ milestone, not block all other work on it.
 
 ## Testing
 
-- Unit tests per agent, with mocked tool/LLM calls (Gatekeeper grading logic, Research strategy
-  selection, Writer synthesis, Verifier claim-checking) — mirrors `enterprise-rag-platform`'s
+- Unit tests per agent, with mocked tool/LLM calls (Gatekeeper grading logic, Research's MCP call
+  parameters, Writer synthesis, Verifier claim-checking) — mirrors `enterprise-rag-platform`'s
   testing philosophy (pytest, high coverage bar).
 - Integration tests for the full LangGraph flow against a small fixture knowledge base (covering:
   sufficient-KB path, web-fallback path, refusal path, groundedness-retry path).
@@ -171,7 +188,10 @@ milestone, not block all other work on it.
   project's plan includes standing up the shared Langfuse account itself if ERP-112 is still
   pending when implementation starts.
 - Exact fixture knowledge base content for integration/eval tests (small, synthetic, not the RAG
-  platform's real indexed documents).
-- Whether the MCP tool server for `enterprise-rag-platform` lives in this repo or is contributed
-  back to `enterprise-rag-platform` itself as a reusable interface — leaning toward this repo,
-  final call at planning time.
+  platform's real indexed documents) — this project's dedicated `enterprise-rag-platform` user
+  (see Authentication section above) will need a small set of documents ingested via that
+  platform's existing `POST /ingestion/pdf` flow for realistic (non-mocked) manual testing.
+- **Resolved 2026-09-28**: the MCP tool server lives in this repo, calling
+  `enterprise-rag-platform`'s existing HTTP API (`/auth/login`, `/auth/refresh`,
+  `/retrieval/query`) as an external client — no changes to `enterprise-rag-platform` itself are
+  required.
