@@ -1,18 +1,33 @@
-"""Query API: streams the agent graph's step-by-step trace, then the final result, as SSE."""
+"""Query API: runs the agent graph, then returns its step-by-step trace and final result as SSE.
+
+Not incremental: the graph runs to completion first, and every trace step is then sent at once.
+True per-step streaming (via `graph.astream`) is a planned follow-up.
+"""
 
 import json
+import logging
+import sys
 from collections.abc import AsyncIterator
 
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
+from langgraph.graph.state import CompiledStateGraph
 
 from app.agents.schemas import GraphState
 from app.api.schemas import QueryRequest
 from app.core.config import get_settings
 from app.core.tracing import get_tracer
 from app.graph.build import build_graph
+from app.rag_client.auth import RagPlatformAuthError
+from app.rag_client.retrieval import RagPlatformRetrievalError
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["query"])
+
+# `sys.executable`, not a bare "python": the MCP server subprocess must run under the same
+# interpreter/venv as this app, not whatever `python` happens to be first on PATH.
+MCP_SERVER_COMMAND = [sys.executable, "-m", "app.mcp_server.server"]
 
 
 def get_graph():
@@ -31,22 +46,37 @@ def get_graph():
     http_client = httpx.AsyncClient(base_url=settings.rag_platform_base_url, timeout=30.0)
     auth = RagPlatformAuth(settings.rag_platform_base_url, settings.rag_platform_email, settings.rag_platform_password, http_client)
     retrieval_client = RagPlatformRetrievalClient(settings.rag_platform_base_url, auth, http_client)
-    mcp_command = ["python", "-m", "app.mcp_server.server"]
     tracer = get_tracer(settings)
-    return build_graph(model, retrieval_client, mcp_command, settings.max_verification_retries, tracer)
+    return build_graph(model, retrieval_client, MCP_SERVER_COMMAND, settings.max_verification_retries, tracer)
 
 
 def _format_sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
-async def _event_stream(query: str) -> AsyncIterator[str]:
-    graph = get_graph()
+async def _event_stream(graph: CompiledStateGraph, query: str) -> AsyncIterator[str]:
     initial_state: GraphState = {
         "query": query, "gatekeeper_decision": None, "evidence": [], "draft": None,
         "verification": None, "retry_count": 0, "final_answer": None, "refused": False, "trace": [],
     }
-    final_state = await graph.ainvoke(initial_state)
+    # The 200 status and headers are already sent once this generator starts, so a failure here
+    # can't become an HTTP error status -- it must surface as an explicit `error` event instead of
+    # the stream ending silently with an empty body.
+    try:
+        final_state = await graph.ainvoke(initial_state)
+    except (RagPlatformRetrievalError, RagPlatformAuthError) as exc:
+        # Upstream response bodies stay in the server log, not in the client-facing message.
+        logger.exception("RAG platform unavailable while answering query")
+        yield _format_sse("error", {
+            "type": type(exc).__name__,
+            "message": "The knowledge base (enterprise-rag-platform) is unavailable or rejected authentication.",
+        })
+        return
+    except Exception as exc:
+        # Unexpected failures: report the type only; details stay in the server log.
+        logger.exception("Agent graph failed while answering query")
+        yield _format_sse("error", {"type": type(exc).__name__, "message": "Query failed; see server logs for details."})
+        return
     for step in final_state["trace"]:
         yield _format_sse("step", step)
     yield _format_sse("result", {"final_answer": final_state["final_answer"], "refused": final_state["refused"]})
@@ -54,5 +84,11 @@ async def _event_stream(query: str) -> AsyncIterator[str]:
 
 @router.post("/query")
 async def query(request: QueryRequest) -> StreamingResponse:
-    """Run a query through the agent graph, streaming each agent's step live."""
-    return StreamingResponse(_event_stream(request.query), media_type="text/event-stream")
+    """Run a query through the agent graph and stream back its full trace and result as SSE.
+
+    The trace is sent after the graph completes, not incrementally per step. The graph is built
+    before the stream opens, so configuration errors (missing settings, etc.) propagate as a normal
+    5xx response rather than a 200 with an empty body.
+    """
+    graph = get_graph()
+    return StreamingResponse(_event_stream(graph, request.query), media_type="text/event-stream")
