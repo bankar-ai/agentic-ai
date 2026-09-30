@@ -2,7 +2,10 @@ import httpx
 import pytest
 
 from app.rag_client.auth import RagPlatformAuth
-from app.rag_client.retrieval import RagPlatformRetrievalClient, RagPlatformRetrievalError
+from app.rag_client.retrieval import (
+    RagPlatformRetrievalClient,
+    RagPlatformRetrievalError,
+)
 
 CHUNK = {
     "chunk_id": "c1", "document_id": "d1", "text": "Paris is the capital of France.",

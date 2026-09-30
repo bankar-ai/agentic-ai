@@ -6,6 +6,7 @@ from collections.abc import AsyncIterator
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
+from app.agents.schemas import GraphState
 from app.api.schemas import QueryRequest
 from app.core.config import get_settings
 from app.core.tracing import get_tracer
@@ -41,7 +42,7 @@ def _format_sse(event: str, data: dict) -> str:
 
 async def _event_stream(query: str) -> AsyncIterator[str]:
     graph = get_graph()
-    initial_state = {
+    initial_state: GraphState = {
         "query": query, "gatekeeper_decision": None, "evidence": [], "draft": None,
         "verification": None, "retry_count": 0, "final_answer": None, "refused": False, "trace": [],
     }

@@ -1,4 +1,9 @@
-from app.agents.schemas import Evidence, GatekeeperDecision, GraphState, VerificationResult
+from app.agents.schemas import (
+    Evidence,
+    GatekeeperDecision,
+    GraphState,
+    VerificationResult,
+)
 
 
 def test_evidence_requires_valid_source():

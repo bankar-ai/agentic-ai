@@ -2,7 +2,12 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app.agents.schemas import DraftAnswer, Evidence, GatekeeperDecision, VerificationResult
+from app.agents.schemas import (
+    DraftAnswer,
+    Evidence,
+    GatekeeperDecision,
+    VerificationResult,
+)
 from app.graph.build import build_graph
 
 

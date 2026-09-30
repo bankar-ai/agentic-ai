@@ -1,6 +1,7 @@
 """Application configuration, loaded from environment variables."""
 
 from functools import lru_cache
+from typing import cast
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -26,5 +27,11 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    """Return the process-wide cached settings instance."""
-    return Settings()
+    """Return the process-wide cached settings instance.
+
+    Settings fields are loaded from environment variables or .env file via pydantic_settings.
+    The cast tells mypy to trust that Settings() returns a fully initialized Settings instance
+    even though it's called without arguments, because pydantic_settings populates fields from
+    environment variables.
+    """
+    return cast(Settings, Settings())  # type: ignore[call-arg]

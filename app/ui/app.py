@@ -6,6 +6,7 @@ value of the correction loop is shown, not just explained. Not a production UI.
 import gradio as gr
 import httpx
 
+from app.agents.schemas import GraphState
 from app.api.router import get_graph
 from app.core.config import get_settings
 from app.rag_client.auth import RagPlatformAuth
@@ -32,7 +33,7 @@ async def run_direct_query(query: str) -> str:
 async def run_agentic_query(query: str) -> tuple[str, str]:
     """Agentic-RAG tab: run the full graph, render the trace and the final (possibly refused) answer."""
     graph = get_graph()
-    initial_state = {
+    initial_state: GraphState = {
         "query": query, "gatekeeper_decision": None, "evidence": [], "draft": None,
         "verification": None, "retry_count": 0, "final_answer": None, "refused": False, "trace": [],
     }

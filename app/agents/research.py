@@ -45,5 +45,7 @@ async def research(
     if decision.route == "web_fallback":
         evidence = await search_web(query)
         return ResearchResult(evidence=evidence)
+    # For KB route, model must be present
+    assert model is not None
     evidence = await _research_kb(model, mcp_server_command, decision, query)
     return ResearchResult(evidence=evidence)
