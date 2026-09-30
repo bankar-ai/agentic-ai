@@ -7,22 +7,25 @@ Once a decision is made, remove it from here and write it up in `.ai/adr/`.
 
 - **ERP-112 sequencing**: whether `enterprise-rag-platform`'s Langfuse integration ticket
   (currently Backlog) is completed before this project's evaluation milestone, or whether this
-  project stands up the shared Langfuse account itself if ERP-112 is still pending when
-  implementation reaches that point. Deferred to implementation planning
-  (`docs/superpowers/specs/2026-09-28-agentic-rag-orchestration-design.md`, "Open Items").
-- **MCP tool server location**: whether the MCP server wrapping `enterprise-rag-platform`'s
-  retrieval API lives in this repo or is contributed back to `enterprise-rag-platform` as a
-  reusable interface. Leaning toward this repo; final call at planning time.
-- **Fixture knowledge base content**: what small, synthetic KB to use for integration/eval tests
-  (not the RAG platform's real indexed documents) — not yet designed.
+  project stands up the shared Langfuse account itself if ERP-112 is still pending. This project's
+  own Langfuse tracer (`app/core/tracing.py`, built in implementation) already degrades gracefully
+  to a no-op when credentials are absent, so this is no longer a blocker on anything — it's purely
+  about whether the two projects end up sharing one Langfuse Cloud account or each stand up their
+  own.
 
-## Resolved (2026-09-28)
+## Resolved
 
-The three questions previously open here — target role/interview type, framework-vs-from-scratch,
-and concrete use case/scope — were resolved in the 2026-09-28 brainstorming session. See
-`docs/superpowers/specs/2026-09-28-agentic-rag-orchestration-design.md` for the full design and
-`.ai/sessions/2026-09-28-agentic-rag-brainstorming.md` for the decision trail (including two use-case
-pivots before landing on the final scope).
+- **Target role/interview type, framework-vs-from-scratch, concrete use case/scope** (2026-09-28
+  brainstorming session). See
+  `docs/superpowers/specs/2026-09-28-agentic-rag-orchestration-design.md` for the full design and
+  `.ai/sessions/2026-09-28-agentic-rag-brainstorming.md` for the decision trail (including two
+  use-case pivots before landing on the final scope).
+- **MCP tool server location** (2026-09-28, spec revision): lives in this repo, calling
+  `enterprise-rag-platform`'s existing HTTP API as an external client — no changes to that repo
+  required. Implemented in `app/mcp_server/server.py`.
+- **Fixture knowledge base content** (implementation, Task 14): a small synthetic fixture
+  (`tests/fixtures/sample_kb.py`) mirroring the real `RetrievedChunk` schema, used for
+  integration-test mocking — not real ingested documents.
 
 ## Context Carried Over From `enterprise-rag-platform`
 
