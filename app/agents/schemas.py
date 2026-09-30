@@ -38,7 +38,7 @@ class DraftAnswer(BaseModel):
 
 
 class VerificationResult(BaseModel):
-    """The Verifier's groundedness check of a draft answer against its cited evidence."""
+    """The Verifier's groundedness check of a draft answer against the retrieved evidence."""
 
     grounded: bool
     unsupported_claims: list[str]

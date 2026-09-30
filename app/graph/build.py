@@ -2,9 +2,8 @@
 groundedness-correction loop (Verifier -> Research -> Writer, capped at `max_retries`).
 """
 
-from pydantic_ai.models import Model
-
 from langgraph.graph import END, StateGraph
+from pydantic_ai.models import Model
 
 from app.agents.gatekeeper import grade_retrieval
 from app.agents.research import research
@@ -48,7 +47,7 @@ def build_graph(
     async def research_node(state: GraphState) -> GraphState:
         # By control flow, gatekeeper_decision is always set before research_node runs
         assert state["gatekeeper_decision"] is not None
-        result = await research(model, mcp_server_command, state["gatekeeper_decision"], state["query"])
+        result = await research(mcp_server_command, state["gatekeeper_decision"], state["query"])
         state["evidence"] = result.evidence
         step = {"agent": "research", "evidence_count": len(result.evidence)}
         state["trace"].append(step)
@@ -66,7 +65,8 @@ def build_graph(
     async def verifier_node(state: GraphState) -> GraphState:
         # By control flow, draft is always set before verifier_node runs
         assert state["draft"] is not None
-        verification = await verify_answer(model, state["draft"])
+        # Verify against the evidence Research actually retrieved, not the Writer's own citations.
+        verification = await verify_answer(model, state["draft"], state["evidence"])
         state["verification"] = verification
         step = {"agent": "verifier", "grounded": verification.grounded}
         state["trace"].append(step)

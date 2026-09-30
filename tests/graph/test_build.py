@@ -37,6 +37,25 @@ async def test_graph_happy_path_returns_grounded_answer():
 
 
 @pytest.mark.asyncio
+async def test_verifier_node_checks_draft_against_retrieved_evidence():
+    """The Verifier must receive the evidence Research retrieved, not only the Writer's draft."""
+    verify_mock = AsyncMock(return_value=VerificationResult(grounded=True, unsupported_claims=[], reasoning="ok"))
+    draft = DraftAnswer(text="Paris [geo.pdf]", cited_evidence=KB_EVIDENCE)
+    with (
+        patch("app.graph.build.grade_retrieval", AsyncMock(return_value=GatekeeperDecision(route="kb", reasoning="ok"))),
+        patch("app.graph.build.research", AsyncMock(return_value=AsyncMock(evidence=KB_EVIDENCE))),
+        patch("app.graph.build.write_answer", AsyncMock(return_value=draft)),
+        patch("app.graph.build.verify_answer", verify_mock),
+    ):
+        graph = build_graph(model=MagicMock(), retrieval_client=MagicMock(), mcp_server_command=[], max_retries=2)
+        await graph.ainvoke(_initial_state("What is the capital of France?"))
+
+    _, draft_arg, evidence_arg = verify_mock.await_args.args
+    assert draft_arg == draft
+    assert evidence_arg == KB_EVIDENCE
+
+
+@pytest.mark.asyncio
 async def test_graph_refuses_after_exhausting_retries():
     ungrounded = VerificationResult(grounded=False, unsupported_claims=["made up fact"], reasoning="not supported")
     with (

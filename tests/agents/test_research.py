@@ -1,9 +1,13 @@
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.agents.research import _research_kb, research
+from app.agents.research import KnowledgeBaseToolError, _research_kb, research
 from app.agents.schemas import Evidence, GatekeeperDecision, ResearchResult
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+MCP_COMMAND = ["C:/venv/python.exe", "-m", "app.mcp_server.server"]
 
 
 @pytest.mark.asyncio
@@ -12,7 +16,7 @@ async def test_research_web_fallback_route_uses_web_search():
     fake_evidence = [Evidence(text="Sunny, 28C", source="web", citation="https://weather.example")]
 
     with patch("app.agents.research.search_web", AsyncMock(return_value=fake_evidence)):
-        result = await research(model=None, mcp_server_command=[], decision=decision, query="weather in Pune today")
+        result = await research(mcp_server_command=[], decision=decision, query="weather in Pune today")
 
     assert isinstance(result, ResearchResult)
     assert result.evidence == fake_evidence
@@ -22,48 +26,93 @@ async def test_research_web_fallback_route_uses_web_search():
 async def test_research_refuse_route_returns_no_evidence():
     decision = GatekeeperDecision(route="refuse", reasoning="unanswerable")
 
-    result = await research(model=None, mcp_server_command=[], decision=decision, query="anything")
+    result = await research(mcp_server_command=[], decision=decision, query="anything")
+
+    assert result.evidence == []
+
+
+def _patched_mcp(tool_result: object):
+    """Patch StdioTransport and MCPToolset so no subprocess is spawned; the toolset's
+    `direct_call_tool` returns `tool_result` as the MCP tool's raw (unwrapped) return value.
+    """
+    fake_transport = MagicMock(name="fake_transport")
+    fake_toolset = MagicMock(name="fake_toolset")
+    fake_toolset.direct_call_tool = AsyncMock(return_value=tool_result)
+    transport_patch = patch("app.agents.research.StdioTransport", return_value=fake_transport)
+    toolset_patch = patch("app.agents.research.MCPToolset", return_value=fake_toolset)
+    return fake_transport, fake_toolset, transport_patch, toolset_patch
+
+
+@pytest.mark.asyncio
+async def test_research_kb_route_wires_stdio_transport_and_calls_tool_directly(monkeypatch):
+    """Construction-level test for the "kb" route's MCP wiring, without a real subprocess:
+    asserts the command/args split, that RAG_PLATFORM_* credentials are forwarded to the child
+    via `env` (the MCP SDK's default env allow-list excludes them), that `cwd` is the repo root,
+    that the transport is wrapped in an MCPToolset with errors raised rather than retried, and
+    that the tool is called directly with the Gatekeeper's search parameters.
+    """
+    monkeypatch.setenv("RAG_PLATFORM_BASE_URL", "http://rag.example")
+    monkeypatch.setenv("RAG_PLATFORM_EMAIL", "agent@example.com")
+    monkeypatch.setenv("RAG_PLATFORM_PASSWORD", "s3cret")
+    monkeypatch.setenv("UNRELATED_SECRET", "must-not-leak")
+    decision = GatekeeperDecision(route="kb", reasoning="kb has the answer", top_k=3, rerank=True)
+    chunks = [{"text": "answer text", "source_filename": "doc.pdf", "section_path": ["A"], "score": 0.9}]
+    fake_transport, fake_toolset, transport_patch, toolset_patch = _patched_mcp(chunks)
+
+    with transport_patch as mock_transport_cls, toolset_patch as mock_toolset_cls:
+        result = await _research_kb(mcp_server_command=MCP_COMMAND, decision=decision, query="what is the refund policy?")
+
+    _, transport_kwargs = mock_transport_cls.call_args
+    assert transport_kwargs["command"] == "C:/venv/python.exe"
+    assert transport_kwargs["args"] == ["-m", "app.mcp_server.server"]
+    env = transport_kwargs["env"]
+    assert env["RAG_PLATFORM_BASE_URL"] == "http://rag.example"
+    assert env["RAG_PLATFORM_EMAIL"] == "agent@example.com"
+    assert env["RAG_PLATFORM_PASSWORD"] == "s3cret"
+    assert "UNRELATED_SECRET" not in env
+    assert Path(transport_kwargs["cwd"]) == REPO_ROOT
+    mock_toolset_cls.assert_called_once_with(fake_transport, tool_error_behavior="error")
+    fake_toolset.direct_call_tool.assert_awaited_once_with(
+        "search_knowledge_base", {"query": "what is the refund policy?", "top_k": 3, "rerank": True}
+    )
+    assert result == [Evidence(text="answer text", source="knowledge_base", citation="doc.pdf")]
+
+
+@pytest.mark.asyncio
+async def test_research_kb_route_labels_every_result_knowledge_base_in_code():
+    """Evidence is built from the tool's structured result, not transcribed by an LLM: every item
+    is labeled "knowledge_base" and cited by its real source filename, whatever else the chunk says.
+    """
+    decision = GatekeeperDecision(route="kb", reasoning="ok")
+    chunks = [
+        {"text": "one", "source_filename": "a.pdf", "section_path": [], "score": 0.8, "source": "web"},
+        {"text": "two", "source_filename": "b.pdf", "section_path": [], "score": 0.7},
+    ]
+    _, _, transport_patch, toolset_patch = _patched_mcp(chunks)
+
+    with transport_patch, toolset_patch:
+        result = await research(mcp_server_command=MCP_COMMAND, decision=decision, query="q")
+
+    assert [item.source for item in result.evidence] == ["knowledge_base", "knowledge_base"]
+    assert [item.citation for item in result.evidence] == ["a.pdf", "b.pdf"]
+    assert [item.text for item in result.evidence] == ["one", "two"]
+
+
+@pytest.mark.asyncio
+async def test_research_kb_route_with_no_results_returns_empty_evidence():
+    decision = GatekeeperDecision(route="kb", reasoning="ok")
+    _, _, transport_patch, toolset_patch = _patched_mcp([])
+
+    with transport_patch, toolset_patch:
+        result = await research(mcp_server_command=MCP_COMMAND, decision=decision, query="q")
 
     assert result.evidence == []
 
 
 @pytest.mark.asyncio
-async def test_research_kb_route_wires_stdio_transport_toolset_and_agent():
-    """Construction-level test for the "kb" route's MCP wiring, without a live model or a real
-    subprocess: patches StdioTransport, MCPToolset, and Agent, then asserts each wiring step --
-    the command/args split, the transport-into-toolset wrap, and the toolset-into-Agent(toolsets=)
-    pass-through -- happened exactly as `_research_kb` intends. A regression in any of these three
-    steps (e.g. swapping command/args, forgetting to wrap in MCPToolset, or passing toolsets under
-    a different kwarg) would fail this test, even though none of it touches a live Ollama model or
-    spawns the real `python -m app.mcp_server.server` subprocess.
-    """
-    decision = GatekeeperDecision(route="kb", reasoning="kb has the answer", top_k=3, rerank=True)
-    fake_evidence = [Evidence(text="answer text", source="knowledge_base", citation="doc.pdf")]
-    fake_transport = MagicMock(name="fake_transport")
-    fake_toolset = MagicMock(name="fake_toolset")
-    fake_model = MagicMock(name="fake_model")
+async def test_research_kb_route_rejects_malformed_tool_result():
+    decision = GatekeeperDecision(route="kb", reasoning="ok")
+    _, _, transport_patch, toolset_patch = _patched_mcp("not a list")
 
-    fake_agent = MagicMock(name="fake_agent")
-    fake_agent.__aenter__ = AsyncMock(return_value=fake_agent)
-    fake_agent.__aexit__ = AsyncMock(return_value=None)
-    fake_agent.run = AsyncMock(return_value=MagicMock(output=fake_evidence))
-
-    with (
-        patch("app.agents.research.StdioTransport", return_value=fake_transport) as mock_transport_cls,
-        patch("app.agents.research.MCPToolset", return_value=fake_toolset) as mock_toolset_cls,
-        patch("app.agents.research.Agent", return_value=fake_agent) as mock_agent_cls,
-    ):
-        result = await _research_kb(
-            model=fake_model,
-            mcp_server_command=["python", "-m", "app.mcp_server.server"],
-            decision=decision,
-            query="what is the refund policy?",
-        )
-
-    mock_transport_cls.assert_called_once_with(command="python", args=["-m", "app.mcp_server.server"])
-    mock_toolset_cls.assert_called_once_with(fake_transport)
-    _, agent_kwargs = mock_agent_cls.call_args
-    assert mock_agent_cls.call_args.args[0] is fake_model
-    assert agent_kwargs["toolsets"] == [fake_toolset]
-    fake_agent.run.assert_awaited_once()
-    assert result == fake_evidence
+    with transport_patch, toolset_patch, pytest.raises(KnowledgeBaseToolError):
+        await _research_kb(mcp_server_command=MCP_COMMAND, decision=decision, query="q")
