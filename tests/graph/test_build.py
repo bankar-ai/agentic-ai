@@ -1,4 +1,4 @@
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -28,7 +28,7 @@ async def test_graph_happy_path_returns_grounded_answer():
         patch("app.graph.build.write_answer", AsyncMock(return_value=DraftAnswer(text="Paris [geo.pdf]", cited_evidence=KB_EVIDENCE))),
         patch("app.graph.build.verify_answer", AsyncMock(return_value=VerificationResult(grounded=True, unsupported_claims=[], reasoning="ok"))),
     ):
-        graph = build_graph(model=None, retrieval_client=None, mcp_server_command=[], max_retries=2)
+        graph = build_graph(model=MagicMock(), retrieval_client=MagicMock(), mcp_server_command=[], max_retries=2)
         final_state = await graph.ainvoke(_initial_state("What is the capital of France?"))
 
     assert final_state["refused"] is False
@@ -45,7 +45,7 @@ async def test_graph_refuses_after_exhausting_retries():
         patch("app.graph.build.write_answer", AsyncMock(return_value=DraftAnswer(text="unsupported claim", cited_evidence=KB_EVIDENCE))),
         patch("app.graph.build.verify_answer", AsyncMock(return_value=ungrounded)),
     ):
-        graph = build_graph(model=None, retrieval_client=None, mcp_server_command=[], max_retries=2)
+        graph = build_graph(model=MagicMock(), retrieval_client=MagicMock(), mcp_server_command=[], max_retries=2)
         final_state = await graph.ainvoke(_initial_state("What is the capital of France?"))
 
     assert final_state["refused"] is True
@@ -55,7 +55,7 @@ async def test_graph_refuses_after_exhausting_retries():
 @pytest.mark.asyncio
 async def test_graph_refuse_route_skips_research_and_writer():
     with patch("app.graph.build.grade_retrieval", AsyncMock(return_value=GatekeeperDecision(route="refuse", reasoning="out of scope"))):
-        graph = build_graph(model=None, retrieval_client=None, mcp_server_command=[], max_retries=2)
+        graph = build_graph(model=MagicMock(), retrieval_client=MagicMock(), mcp_server_command=[], max_retries=2)
         final_state = await graph.ainvoke(_initial_state("What is your favorite color?"))
 
     assert final_state["refused"] is True

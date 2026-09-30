@@ -1,4 +1,4 @@
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -27,7 +27,7 @@ async def test_kb_sufficient_path_produces_grounded_answer():
         patch("app.graph.build.write_answer", AsyncMock(return_value=DraftAnswer(text="Paris [world-facts.pdf]", cited_evidence=kb_evidence))),
         patch("app.graph.build.verify_answer", AsyncMock(return_value=VerificationResult(grounded=True, unsupported_claims=[], reasoning="matches"))),
     ):
-        graph = build_graph(None, None, [], max_retries=2)
+        graph = build_graph(MagicMock(), MagicMock(), [], max_retries=2)
         state = await graph.ainvoke(_initial_state("What is the capital of France?"))
 
     assert state["final_answer"] == "Paris [world-facts.pdf]"
@@ -45,7 +45,7 @@ async def test_web_fallback_path_labels_evidence_as_web():
         ))),
         patch("app.graph.build.verify_answer", AsyncMock(return_value=VerificationResult(grounded=True, unsupported_claims=[], reasoning="matches"))),
     ):
-        graph = build_graph(None, None, [], max_retries=2)
+        graph = build_graph(MagicMock(), MagicMock(), [], max_retries=2)
         state = await graph.ainvoke(_initial_state("What's the weather in Pune today?"))
 
     assert "web search" in state["final_answer"].lower()
@@ -59,7 +59,7 @@ async def test_out_of_scope_query_is_refused_without_research():
         patch("app.graph.build.grade_retrieval", AsyncMock(return_value=GatekeeperDecision(route="refuse", reasoning="nonsensical question"))),
         patch("app.graph.build.research", research_mock),
     ):
-        graph = build_graph(None, None, [], max_retries=2)
+        graph = build_graph(MagicMock(), MagicMock(), [], max_retries=2)
         state = await graph.ainvoke(_initial_state("asdkjaslkdj?"))
 
     assert state["refused"] is True
@@ -80,7 +80,7 @@ async def test_web_fallback_with_no_results_refuses_cleanly():
             reasoning="no cited evidence to verify against",
         ))),
     ):
-        graph = build_graph(None, None, [], max_retries=2)
+        graph = build_graph(MagicMock(), MagicMock(), [], max_retries=2)
         state = await graph.ainvoke(_initial_state("What's the weather on Mars right now?"))
 
     assert state["refused"] is True
@@ -97,7 +97,7 @@ async def test_persistent_ungrounded_answer_refuses_after_max_retries():
         patch("app.graph.build.write_answer", AsyncMock(return_value=DraftAnswer(text="fabricated claim", cited_evidence=kb_evidence))),
         patch("app.graph.build.verify_answer", AsyncMock(return_value=ungrounded)),
     ):
-        graph = build_graph(None, None, [], max_retries=2)
+        graph = build_graph(MagicMock(), MagicMock(), [], max_retries=2)
         state = await graph.ainvoke(_initial_state("What is the capital of France?"))
 
     assert state["refused"] is True

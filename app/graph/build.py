@@ -2,8 +2,6 @@
 groundedness-correction loop (Verifier -> Research -> Writer, capped at `max_retries`).
 """
 
-from typing import cast
-
 from pydantic_ai.models import Model
 
 from langgraph.graph import END, StateGraph
@@ -32,11 +30,13 @@ def build_graph(
     tracer = tracer or NoOpTracer()
 
     async def gatekeeper_node(state: GraphState) -> GraphState:
-        # grade_retrieval(model: Model, ...) requires non-optional Model. By the calling pattern
-        # in production (router.py:get_graph), model is always provided (from get_ollama_model).
-        # In tests, functions are patched and don't use the parameter, so None is acceptable.
-        # Cast here to resolve the type mismatch; in production this is safe.
-        decision = await grade_retrieval(cast(Model, model), cast(RagPlatformRetrievalClient, retrieval_client), state["query"])
+        # grade_retrieval requires non-optional Model. By the calling pattern in production
+        # (router.py:get_graph), model is always provided (from get_ollama_model). This assert
+        # provides both type narrowing and runtime validation: if somehow None reaches here,
+        # the assertion fails immediately with a clear error, rather than silently failing
+        # deep inside PydanticAI.
+        assert model is not None
+        decision = await grade_retrieval(model, retrieval_client, state["query"])
         state["gatekeeper_decision"] = decision
         step = {"agent": "gatekeeper", "route": decision.route, "reasoning": decision.reasoning}
         state["trace"].append(step)
