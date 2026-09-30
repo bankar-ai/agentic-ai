@@ -1,7 +1,7 @@
 [project]
 name = "agentic-rag-orchestration"
 version = "0.1.0"
-description = "Add your description here"
+description = "Self-correcting agentic RAG orchestration (Gatekeeper/Research/Writer/Verifier on LangGraph + PydanticAI) over enterprise-rag-platform via MCP"
 requires-python = ">=3.12"
 dependencies = [
     "ddgs>=9.16.0",
