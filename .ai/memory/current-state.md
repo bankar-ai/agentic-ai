@@ -9,9 +9,9 @@ History belongs in `.ai/sessions/`, not here.
   mirroring `enterprise-rag-platform`'s structure), `CLAUDE.md`, and a `docs/architecture.md` skeleton.
 - **Design spec** (2026-09-28): `docs/superpowers/specs/2026-09-28-agentic-rag-orchestration-design.md`.
   **Implementation plan**: `docs/superpowers/plans/2026-09-28-agentic-rag-orchestration.md` (17 tasks).
-- **The agentic RAG orchestration system is implemented** (2026-09-30). All 17 plan tasks are done
-  and the final whole-branch review findings are fixed. The work is on branch
-  `worktree-agentic-rag-orchestration` and is not yet merged to `main`. Components:
+- **The agentic RAG orchestration system is implemented and merged to `main`** (2026-09-30, PR #1
+  at `bankar-ai/agentic-ai`). All 17 plan tasks are done and the final whole-branch review findings
+  are fixed. Components:
   - `app/rag_client/`: auth and retrieval clients for `enterprise-rag-platform`.
   - `app/mcp_server/`: MCP stdio server exposing `search_knowledge_base`. It lives in this repo,
     which resolves the earlier open question about where the server should go.
@@ -45,7 +45,6 @@ History belongs in `.ai/sessions/`, not here.
 
 ## Next Planned Work
 
-- Merge `worktree-agentic-rag-orchestration` into `main` after the final re-review.
 - Run an end-to-end smoke test against live Ollama and `enterprise-rag-platform`.
 - Evaluation milestone: Langfuse datasets/scores, which depends on ERP-112 sequencing (see
   `decisions-in-progress.md`).
