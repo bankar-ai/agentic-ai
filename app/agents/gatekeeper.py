@@ -39,4 +39,15 @@ async def grade_retrieval(
     agent = _build_agent(model)
     prompt = f"Question: {query}\n\nExploratory KB results:\n{chunk_summaries}"
     result = await agent.run(prompt)
-    return result.output
+    decision = result.output
+
+    # Code-level guard: with zero exploratory results, a "kb" route can only find nothing again,
+    # burn every retry, and refuse -- without ever trying the web fallback. Don't trust a (small,
+    # local) model to always notice the "(no results)" marker.
+    if not exploratory.results and decision.route == "kb":
+        return decision.model_copy(update={
+            "route": "web_fallback",
+            "reasoning": f"{decision.reasoning} [Overridden: exploratory KB search returned no results, "
+                         "so routing to web_fallback instead of kb.]",
+        })
+    return decision

@@ -33,3 +33,26 @@ async def test_grade_retrieval_handles_empty_kb_results():
     decision = await grade_retrieval(model, fake_client, "What is today's weather in Pune?")
 
     assert decision.route == "web_fallback"
+
+
+@pytest.mark.asyncio
+async def test_grade_retrieval_overrides_kb_route_when_kb_results_are_empty():
+    fake_client = AsyncMock()
+    fake_client.search.return_value = RetrievalResult(results=[])
+    model = TestModel(custom_output_args=GatekeeperDecision(route="kb", reasoning="looks answerable"))
+
+    decision = await grade_retrieval(model, fake_client, "What is today's weather in Pune?")
+
+    assert decision.route == "web_fallback"
+    assert "Overridden" in decision.reasoning
+
+
+@pytest.mark.asyncio
+async def test_grade_retrieval_does_not_override_refuse_when_kb_results_are_empty():
+    fake_client = AsyncMock()
+    fake_client.search.return_value = RetrievalResult(results=[])
+    model = TestModel(custom_output_args=GatekeeperDecision(route="refuse", reasoning="nonsense"))
+
+    decision = await grade_retrieval(model, fake_client, "asdkjaslkdj?")
+
+    assert decision.route == "refuse"

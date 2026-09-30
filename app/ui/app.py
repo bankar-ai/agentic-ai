@@ -1,6 +1,8 @@
 """Two-tab Gradio demo: Direct RAG (single retrieval pass, no correction) side by side with
-Agentic RAG (the full Gatekeeper->Research->Writer->Verifier trace, streamed live), so the
-value of the correction loop is shown, not just explained. Not a production UI.
+Agentic RAG (the full Gatekeeper->Research->Writer->Verifier trace, shown once the graph has
+finished -- not streamed step by step), so the value of the correction loop is shown, not just
+explained. The Agentic tab runs the graph in-process via `get_graph()` rather than calling the
+SSE endpoint. Not a production UI.
 """
 
 import gradio as gr
