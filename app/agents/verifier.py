@@ -21,7 +21,15 @@ from app.agents.schemas import DraftAnswer, Evidence, VerificationResult
 _SYSTEM_PROMPT = """You are the Verifier agent. Given a draft answer and the evidence that was
 actually retrieved for it, check whether every factual claim in the answer is supported by that
 evidence. List any unsupported claims verbatim. Be strict: an unsupported claim is worse than an
-admitted gap."""
+admitted gap.
+
+You MUST respond by calling the structured output tool with your verdict -- never reply with plain
+prose. Do not describe your verdict in free text outside the tool call."""
+
+# See writer.py's identical constant and note for why: raised retries help smaller local models
+# self-correct into the structured tool call; `tool_choice="required"` was tried and reverted
+# there for the same PydanticAI limitation (no function tools alongside output_type).
+_OUTPUT_RETRIES = 3
 
 
 def _evidence_key(item: Evidence) -> tuple[str, str]:
@@ -42,7 +50,7 @@ async def verify_answer(model: Model | None, draft: DraftAnswer, evidence: list[
             reasoning=f"{len(fabricated)} cited evidence item(s) do not match any retrieved evidence",
         )
 
-    agent = Agent(model, output_type=VerificationResult, system_prompt=_SYSTEM_PROMPT)
+    agent = Agent(model, output_type=VerificationResult, system_prompt=_SYSTEM_PROMPT, retries=_OUTPUT_RETRIES)
     evidence_block = "\n".join(f"[{item.source}] {item.citation}: {item.text}" for item in evidence)
     prompt = f"Draft answer: {draft.text}\n\nRetrieved evidence:\n{evidence_block}"
     result = await agent.run(prompt)
