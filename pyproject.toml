@@ -1,0 +1,26 @@
+[project]
+name = "agentic-rag-orchestration"
+version = "0.1.0"
+description = "Add your description here"
+requires-python = ">=3.12"
+dependencies = [
+    "ddgs>=9.16.0",
+    "fastapi>=0.142.2",
+    "gradio>=6.29.0",
+    "httpx>=0.28.1",
+    "langgraph>=1.2.12",
+    "mcp>=2.2.0",
+    "pydantic>=2.13.5",
+    "pydantic-ai-slim[mcp,openai]>=2.52.0",
+    "pydantic-settings>=2.15.0",
+    "uvicorn[standard]>=0.54.0",
+]
+
+[dependency-groups]
+dev = [
+    "mypy>=2.3.1",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.16.9",
+]
