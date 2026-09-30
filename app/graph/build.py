@@ -9,17 +9,29 @@ from app.agents.research import research
 from app.agents.schemas import GraphState
 from app.agents.verifier import verify_answer
 from app.agents.writer import write_answer
+from app.core.tracing import NoOpTracer, Tracer
 
 
-def build_graph(model, retrieval_client, mcp_server_command: list[str], max_retries: int):
+def build_graph(
+    model,
+    retrieval_client,
+    mcp_server_command: list[str],
+    max_retries: int,
+    tracer: Tracer | None = None,
+):
     """Compile the agent orchestration graph. `model`/`retrieval_client` are threaded into every
     node via closures so each node stays a plain async function the tests can patch by name.
+    `tracer` receives each node's step alongside the in-memory `state["trace"]` list, defaulting
+    to a no-op so callers that don't pass one (or don't configure Langfuse) are unaffected.
     """
+    tracer = tracer or NoOpTracer()
 
     async def gatekeeper_node(state: GraphState) -> GraphState:
         decision = await grade_retrieval(model, retrieval_client, state["query"])
         state["gatekeeper_decision"] = decision
-        state["trace"].append({"agent": "gatekeeper", "route": decision.route, "reasoning": decision.reasoning})
+        step = {"agent": "gatekeeper", "route": decision.route, "reasoning": decision.reasoning}
+        state["trace"].append(step)
+        tracer.trace_step(step)
         if decision.route == "refuse":
             state["refused"] = True
         return state
@@ -27,19 +39,25 @@ def build_graph(model, retrieval_client, mcp_server_command: list[str], max_retr
     async def research_node(state: GraphState) -> GraphState:
         result = await research(model, mcp_server_command, state["gatekeeper_decision"], state["query"])
         state["evidence"] = result.evidence
-        state["trace"].append({"agent": "research", "evidence_count": len(result.evidence)})
+        step = {"agent": "research", "evidence_count": len(result.evidence)}
+        state["trace"].append(step)
+        tracer.trace_step(step)
         return state
 
     async def writer_node(state: GraphState) -> GraphState:
         draft = await write_answer(model, state["query"], state["evidence"])
         state["draft"] = draft
-        state["trace"].append({"agent": "writer", "text": draft.text})
+        step = {"agent": "writer", "text": draft.text}
+        state["trace"].append(step)
+        tracer.trace_step(step)
         return state
 
     async def verifier_node(state: GraphState) -> GraphState:
         verification = await verify_answer(model, state["draft"])
         state["verification"] = verification
-        state["trace"].append({"agent": "verifier", "grounded": verification.grounded})
+        step = {"agent": "verifier", "grounded": verification.grounded}
+        state["trace"].append(step)
+        tracer.trace_step(step)
         if verification.grounded:
             state["final_answer"] = state["draft"].text
         else:

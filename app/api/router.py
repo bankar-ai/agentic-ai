@@ -8,6 +8,7 @@ from fastapi.responses import StreamingResponse
 
 from app.api.schemas import QueryRequest
 from app.core.config import get_settings
+from app.core.tracing import get_tracer
 from app.graph.build import build_graph
 
 router = APIRouter(tags=["query"])
@@ -30,7 +31,8 @@ def get_graph():
     auth = RagPlatformAuth(settings.rag_platform_base_url, settings.rag_platform_email, settings.rag_platform_password, http_client)
     retrieval_client = RagPlatformRetrievalClient(settings.rag_platform_base_url, auth, http_client)
     mcp_command = ["python", "-m", "app.mcp_server.server"]
-    return build_graph(model, retrieval_client, mcp_command, settings.max_verification_retries)
+    tracer = get_tracer(settings)
+    return build_graph(model, retrieval_client, mcp_command, settings.max_verification_retries, tracer)
 
 
 def _format_sse(event: str, data: dict) -> str:
