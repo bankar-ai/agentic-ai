@@ -21,3 +21,9 @@ class RetrievedChunk(BaseModel):
     page_end: int
     source_filename: str
     score: float
+
+
+class RetrievalResult(BaseModel):
+    """Ranked retrieval results, mirroring `enterprise-rag-platform`'s `RetrievalResponse`."""
+
+    results: list[RetrievedChunk]
