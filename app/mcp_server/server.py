@@ -35,12 +35,14 @@ async def _search_knowledge_base_impl(
 
 
 def _build_auth(settings: Settings, http_client: httpx.AsyncClient) -> RagPlatformAuthProvider:
-    """AGT-013: a per-user token (forwarded via RAG_PLATFORM_ACCESS_TOKEN env) takes priority
-    over the fixed service account, so this subprocess retrieves as the end user when one is
-    logged in, and as the configured service account otherwise.
+    """AGT-013: a per-user session (forwarded via RAG_PLATFORM_ACCESS_TOKEN/CSRF_TOKEN env) takes
+    priority over the fixed service account, so this subprocess retrieves as the end user when
+    one is logged in, and as the configured service account otherwise.
     """
-    if settings.rag_platform_access_token:
-        return StaticTokenAuth(settings.rag_platform_access_token)
+    if settings.rag_platform_access_token and settings.rag_platform_csrf_token:
+        return StaticTokenAuth(
+            settings.rag_platform_access_token, settings.rag_platform_csrf_token, http_client, settings.rag_platform_base_url
+        )
     return RagPlatformAuth(
         settings.rag_platform_base_url, settings.rag_platform_email, settings.rag_platform_password, http_client
     )

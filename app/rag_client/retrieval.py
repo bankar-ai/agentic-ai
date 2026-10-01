@@ -4,6 +4,10 @@ That endpoint does hybrid (FAISS + BM25, fused) retrieval as a single call -- th
 separate keyword/semantic/chunk-level strategies to choose between, so this client exposes
 exactly the parameters the real endpoint accepts: `top_k`, `rerank`, `expand_sections`,
 `document_ids`.
+
+ERP-116: auth now travels via an httpOnly cookie the shared http client replays automatically,
+plus an `X-CSRF-Token` header this client sets explicitly -- not an `Authorization` header. See
+`app/rag_client/auth.py`'s module docstring for the full contract.
 """
 
 import httpx
@@ -32,14 +36,18 @@ class RagPlatformRetrievalClient:
         expand_sections: bool = False,
         document_ids: list[str] | None = None,
     ) -> RetrievalResult:
-        """Run one hybrid retrieval query, refreshing the token once on a 401."""
+        """Run one hybrid retrieval query, refreshing the session once on a 401/403.
+
+        A 403 (not just 401) can mean "CSRF token stale after a refresh elsewhere", so both are
+        treated as the same retry-once signal here.
+        """
         payload = {
             "query": query, "top_k": top_k, "rerank": rerank,
             "expand_sections": expand_sections, "document_ids": document_ids,
         }
         try:
-            response = await self._request(payload, await self._auth.get_access_token())
-            if response.status_code == 401:
+            response = await self._request(payload, await self._auth.get_csrf_token())
+            if response.status_code in (401, 403):
                 response = await self._request(payload, await self._auth.refresh())
         except httpx.HTTPError as exc:
             raise RagPlatformRetrievalError(f"Retrieval request failed: {exc}") from exc
@@ -50,7 +58,5 @@ class RagPlatformRetrievalClient:
             )
         return RetrievalResult(**response.json())
 
-    async def _request(self, payload: dict, access_token: str) -> httpx.Response:
-        return await self._http.post(
-            "/retrieval/query", json=payload, headers={"Authorization": f"Bearer {access_token}"}
-        )
+    async def _request(self, payload: dict, csrf_token: str) -> httpx.Response:
+        return await self._http.post("/retrieval/query", json=payload, headers={"X-CSRF-Token": csrf_token})

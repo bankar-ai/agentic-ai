@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.agents.research import KnowledgeBaseToolError, _research_kb, research
-from app.agents.schemas import Evidence, GatekeeperDecision, ResearchResult
+from app.agents.schemas import Evidence, GatekeeperDecision, ResearchResult, UserSession
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MCP_COMMAND = ["C:/venv/python.exe", "-m", "app.mcp_server.server"]
@@ -79,9 +79,10 @@ async def test_research_kb_route_wires_stdio_transport_and_calls_tool_directly(m
 
 
 @pytest.mark.asyncio
-async def test_research_kb_route_forwards_user_access_token_to_subprocess_env(monkeypatch):
-    """AGT-013: a logged-in user's token overrides the fixed service account for this one call,
-    forwarded to the MCP subprocess as RAG_PLATFORM_ACCESS_TOKEN (see mcp_server.server._build_auth).
+async def test_research_kb_route_forwards_user_session_to_subprocess_env(monkeypatch):
+    """AGT-013: a logged-in user's session overrides the fixed service account for this one call,
+    forwarded to the MCP subprocess as RAG_PLATFORM_ACCESS_TOKEN/CSRF_TOKEN (see
+    mcp_server.server._build_auth).
     """
     monkeypatch.setenv("RAG_PLATFORM_BASE_URL", "http://rag.example")
     monkeypatch.setenv("RAG_PLATFORM_EMAIL", "agent@example.com")
@@ -89,23 +90,23 @@ async def test_research_kb_route_forwards_user_access_token_to_subprocess_env(mo
     decision = GatekeeperDecision(route="kb", reasoning="ok")
     chunks = [{"text": "answer", "source_filename": "doc.pdf", "section_path": [], "score": 0.9}]
     _, _, transport_patch, toolset_patch = _patched_mcp(chunks)
+    session = UserSession(access_token="user-token-123", csrf_token="user-csrf-456")
 
     with transport_patch as mock_transport_cls, toolset_patch:
-        await _research_kb(
-            mcp_server_command=MCP_COMMAND, decision=decision, query="q", user_access_token="user-token-123"
-        )
+        await _research_kb(mcp_server_command=MCP_COMMAND, decision=decision, query="q", user_session=session)
 
     _, transport_kwargs = mock_transport_cls.call_args
     env = transport_kwargs["env"]
     assert env["RAG_PLATFORM_ACCESS_TOKEN"] == "user-token-123"
+    assert env["RAG_PLATFORM_CSRF_TOKEN"] == "user-csrf-456"
     # The fixed service-account credentials are still forwarded too -- mcp_server.server's
-    # _build_auth prioritizes the access token when present, but doesn't require the caller to
+    # _build_auth prioritizes the session when present, but doesn't require the caller to
     # omit the others.
     assert env["RAG_PLATFORM_EMAIL"] == "agent@example.com"
 
 
 @pytest.mark.asyncio
-async def test_research_kb_route_omits_access_token_env_when_not_logged_in(monkeypatch):
+async def test_research_kb_route_omits_session_env_when_not_logged_in(monkeypatch):
     monkeypatch.setenv("RAG_PLATFORM_BASE_URL", "http://rag.example")
     monkeypatch.setenv("RAG_PLATFORM_EMAIL", "agent@example.com")
     monkeypatch.setenv("RAG_PLATFORM_PASSWORD", "s3cret")

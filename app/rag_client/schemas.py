@@ -1,13 +1,24 @@
-"""Schemas mirroring `enterprise-rag-platform`'s auth and retrieval API shapes."""
+"""Schemas mirroring `enterprise-rag-platform`'s auth and retrieval API shapes.
+
+ERP-116 note (discovered live 2026-10-01, deploying against the real platform for the first
+time): `POST /auth/login`/`/refresh` no longer return access/refresh tokens in the body -- those
+are delivered as httpOnly cookies now, invisible to this client except via its httpx.AsyncClient's
+own cookie jar (which captures and replays them automatically, as long as the same AsyncClient
+instance is reused across the login call and every subsequent request -- already true of how this
+project's auth/retrieval clients are constructed). Only `csrf_token` (needed as the `X-CSRF-Token`
+header on every state-changing request, per the double-submit pattern) comes back in the body.
+"""
 
 from pydantic import BaseModel
 
 
-class TokenPair(BaseModel):
-    """An access + refresh token pair, as issued by `enterprise-rag-platform`."""
+class AuthSession(BaseModel):
+    """What `POST /auth/login`/`/refresh` actually return post-ERP-116 -- the access/refresh
+    tokens themselves arrive only as httpOnly cookies on the same response, not in this body.
+    """
 
-    access_token: str
-    refresh_token: str
+    user_id: str
+    csrf_token: str
 
 
 class RetrievedChunk(BaseModel):

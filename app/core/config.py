@@ -15,9 +15,11 @@ class Settings(BaseSettings):
     rag_platform_email: str
     rag_platform_password: str
     # Per-request override (AGT-013): when the MCP server subprocess is spawned on behalf of a
-    # logged-in end user, this carries their already-issued access token so retrieval runs as
-    # them, not the fixed service account above. Unset in the normal (no end-user auth) case.
+    # logged-in end user, these carry their already-established session (a cookie value + CSRF
+    # token, post-ERP-116 -- see app/rag_client/auth.py's module docstring) so retrieval runs as
+    # them, not the fixed service account above. Both or neither; unset in the normal case.
     rag_platform_access_token: str | None = None
+    rag_platform_csrf_token: str | None = None
 
     # AGT-004: "ollama" (default, local dev/free) or "openrouter" (deployment -- the local VM
     # this project deploys alongside has no room to run Ollama; see docs/architecture.md).

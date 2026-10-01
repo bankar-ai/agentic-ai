@@ -48,7 +48,7 @@ def build_graph(
         # By control flow, gatekeeper_decision is always set before research_node runs
         assert state["gatekeeper_decision"] is not None
         result = await research(
-            mcp_server_command, state["gatekeeper_decision"], state["query"], state.get("user_access_token")
+            mcp_server_command, state["gatekeeper_decision"], state["query"], state.get("user_session")
         )
         state["evidence"] = result.evidence
         step = {"agent": "research", "evidence_count": len(result.evidence)}

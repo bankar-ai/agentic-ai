@@ -28,7 +28,7 @@ from pathlib import Path
 
 from pydantic_ai.mcp import MCPToolset, StdioTransport
 
-from app.agents.schemas import Evidence, GatekeeperDecision, ResearchResult
+from app.agents.schemas import Evidence, GatekeeperDecision, ResearchResult, UserSession
 from app.agents.web_search import search_web
 
 _KB_TOOL_NAME = "search_knowledge_base"
@@ -42,28 +42,30 @@ class KnowledgeBaseToolError(RuntimeError):
     """The MCP knowledge-base tool returned something other than a list of result chunks."""
 
 
-def _mcp_subprocess_env(user_access_token: str | None = None) -> dict[str, str]:
+def _mcp_subprocess_env(user_session: UserSession | None = None) -> dict[str, str]:
     """Environment variables to forward to the MCP server subprocess, on top of the MCP SDK's
     default allow-list: every `RAG_PLATFORM_*` credential/config the server's `Settings` needs.
 
-    AGT-013: when `user_access_token` is supplied (a logged-in end user, not the fixed service
-    account), it's forwarded as `RAG_PLATFORM_ACCESS_TOKEN`, overriding the parent process's own
-    forwarded email/password for just this one subprocess call -- the subprocess then retrieves
-    as that user, not the service account (see `app/mcp_server/server.py`'s `_build_auth`).
+    AGT-013: when `user_session` is supplied (a logged-in end user, not the fixed service
+    account), it's forwarded as `RAG_PLATFORM_ACCESS_TOKEN`/`RAG_PLATFORM_CSRF_TOKEN`, overriding
+    the parent process's own forwarded email/password for just this one subprocess call -- the
+    subprocess then retrieves as that user, not the service account (see
+    `app/mcp_server/server.py`'s `_build_auth`).
     """
     env = {key: value for key, value in os.environ.items() if key.upper().startswith(_FORWARDED_ENV_PREFIXES)}
-    if user_access_token:
-        env["RAG_PLATFORM_ACCESS_TOKEN"] = user_access_token
+    if user_session:
+        env["RAG_PLATFORM_ACCESS_TOKEN"] = user_session.access_token
+        env["RAG_PLATFORM_CSRF_TOKEN"] = user_session.csrf_token
     return env
 
 
 async def _research_kb(
-    mcp_server_command: list[str], decision: GatekeeperDecision, query: str, user_access_token: str | None = None
+    mcp_server_command: list[str], decision: GatekeeperDecision, query: str, user_session: UserSession | None = None
 ) -> list[Evidence]:
     transport = StdioTransport(
         command=mcp_server_command[0],
         args=mcp_server_command[1:],
-        env=_mcp_subprocess_env(user_access_token),
+        env=_mcp_subprocess_env(user_session),
         cwd=str(_REPO_ROOT),
     )
     # tool_error_behavior="error": outside an Agent run there is no model to retry, so a
@@ -78,11 +80,11 @@ async def _research_kb(
 
 
 async def research(
-    mcp_server_command: list[str], decision: GatekeeperDecision, query: str, user_access_token: str | None = None
+    mcp_server_command: list[str], decision: GatekeeperDecision, query: str, user_session: UserSession | None = None
 ) -> ResearchResult:
     """Gather evidence according to the Gatekeeper's chosen route.
 
-    `user_access_token` (AGT-013): the logged-in end user's RAG-platform token, if any -- only
+    `user_session` (AGT-013): the logged-in end user's RAG-platform session, if any -- only
     relevant to the "kb" route, which is the only one that calls the RAG platform.
     """
     if decision.route == "refuse":
@@ -90,5 +92,5 @@ async def research(
     if decision.route == "web_fallback":
         evidence = await search_web(query)
         return ResearchResult(evidence=evidence)
-    evidence = await _research_kb(mcp_server_command, decision, query, user_access_token)
+    evidence = await _research_kb(mcp_server_command, decision, query, user_session)
     return ResearchResult(evidence=evidence)

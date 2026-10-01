@@ -45,7 +45,23 @@ async def test_search_knowledge_base_empty_results():
     assert result == []
 
 
-def test_build_auth_uses_static_token_when_access_token_set():
+def test_build_auth_uses_static_token_when_session_set():
+    settings = Settings(
+        rag_platform_base_url="http://localhost:8000",
+        rag_platform_email="svc@example.com",
+        rag_platform_password="secret123",
+        rag_platform_access_token="user-supplied-token",
+        rag_platform_csrf_token="user-supplied-csrf",
+    )
+
+    auth = _build_auth(settings, MagicMock(spec=httpx.AsyncClient))
+
+    assert isinstance(auth, StaticTokenAuth)
+
+
+def test_build_auth_falls_back_to_service_account_when_only_access_token_set():
+    """Both-or-neither: a partial session (e.g. a missing CSRF token) must not be treated as
+    a usable per-user session."""
     settings = Settings(
         rag_platform_base_url="http://localhost:8000",
         rag_platform_email="svc@example.com",
@@ -55,7 +71,7 @@ def test_build_auth_uses_static_token_when_access_token_set():
 
     auth = _build_auth(settings, MagicMock(spec=httpx.AsyncClient))
 
-    assert isinstance(auth, StaticTokenAuth)
+    assert isinstance(auth, RagPlatformAuth)
 
 
 def test_build_auth_falls_back_to_service_account_when_no_access_token():

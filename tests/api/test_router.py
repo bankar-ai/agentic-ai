@@ -3,7 +3,8 @@ from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 
-from app.api.router import MCP_SERVER_COMMAND, extract_bearer_token
+from app.agents.schemas import UserSession
+from app.api.router import MCP_SERVER_COMMAND, extract_user_session
 from app.main import app
 from app.rag_client.retrieval import RagPlatformRetrievalError
 
@@ -74,18 +75,20 @@ def test_query_endpoint_rejects_empty_query():
     assert response.status_code == 422
 
 
-def test_extract_bearer_token_parses_header():
-    assert extract_bearer_token("Bearer abc123") == "abc123"
+def test_extract_user_session_parses_both_headers():
+    session = extract_user_session("Bearer abc123", "csrf-456")
+    assert session == UserSession(access_token="abc123", csrf_token="csrf-456")
 
 
-def test_extract_bearer_token_returns_none_when_absent_or_malformed():
-    assert extract_bearer_token(None) is None
-    assert extract_bearer_token("") is None
-    assert extract_bearer_token("abc123") is None  # missing "Bearer " prefix
+def test_extract_user_session_returns_none_when_either_header_absent_or_malformed():
+    assert extract_user_session(None, "csrf-456") is None
+    assert extract_user_session("Bearer abc123", None) is None
+    assert extract_user_session("", "csrf-456") is None
+    assert extract_user_session("abc123", "csrf-456") is None  # missing "Bearer " prefix
 
 
-def test_query_endpoint_passes_user_token_to_get_graph_when_logged_in():
-    """AGT-013: an Authorization header must actually reach get_graph(), not be silently dropped."""
+def test_query_endpoint_passes_user_session_to_get_graph_when_logged_in():
+    """AGT-013: both auth headers must actually reach get_graph(), not be silently dropped."""
     fake_final_state = {"final_answer": "answer", "refused": False, "trace": []}
     fake_graph = AsyncMock()
     fake_graph.ainvoke.return_value = fake_final_state
@@ -94,10 +97,10 @@ def test_query_endpoint_passes_user_token_to_get_graph_when_logged_in():
         client = TestClient(app)
         client.post(
             "/query", json={"query": "What is the capital of France?"},
-            headers={"Authorization": "Bearer user-token-123"},
+            headers={"Authorization": "Bearer user-token-123", "X-RAG-CSRF-Token": "user-csrf-456"},
         )
 
-    mock_get_graph.assert_called_once_with("user-token-123")
+    mock_get_graph.assert_called_once_with(UserSession(access_token="user-token-123", csrf_token="user-csrf-456"))
 
 
 def test_query_endpoint_passes_none_to_get_graph_when_not_logged_in():

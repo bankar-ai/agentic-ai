@@ -13,28 +13,30 @@ optional -- without it, both tabs behave exactly as before (the fixed service ac
 import gradio as gr
 import httpx
 
-from app.agents.schemas import GraphState
+from app.agents.schemas import GraphState, UserSession
 from app.api.router import get_graph
 from app.core.config import get_settings
 from app.rag_client.auth import RagPlatformAuth, RagPlatformAuthError, StaticTokenAuth
 from app.rag_client.retrieval import RagPlatformRetrievalClient
 
 
-def _get_retrieval_client(user_token: str | None = None) -> RagPlatformRetrievalClient:
+def _get_retrieval_client(user_session: UserSession | None = None) -> RagPlatformRetrievalClient:
     settings = get_settings()
     http_client = httpx.AsyncClient(base_url=settings.rag_platform_base_url, timeout=30.0)
     auth = (
-        StaticTokenAuth(user_token)
-        if user_token
+        StaticTokenAuth(user_session.access_token, user_session.csrf_token, http_client, settings.rag_platform_base_url)
+        if user_session
         else RagPlatformAuth(settings.rag_platform_base_url, settings.rag_platform_email, settings.rag_platform_password, http_client)
     )
     return RagPlatformRetrievalClient(settings.rag_platform_base_url, auth, http_client)
 
 
-async def login(email: str, password: str) -> tuple[str | None, str]:
+async def login(email: str, password: str) -> tuple[UserSession | None, str]:
     """Log in directly against `enterprise-rag-platform`'s own `/auth/login` -- this UI never
-    stores the password past this one call, only the resulting access token (held in `gr.State`,
-    per-browser-session, never written to disk).
+    stores the password past this one call, only the resulting session (held in `gr.State`,
+    per-browser-session, never written to disk). The access token is read back out of this one-off
+    client's cookie jar (where the platform's `Set-Cookie` landed it) since every later query
+    starts a fresh http client and must re-inject it itself via `StaticTokenAuth`.
     """
     if not email or not password:
         return None, "Enter both email and password."
@@ -42,15 +44,18 @@ async def login(email: str, password: str) -> tuple[str | None, str]:
     async with httpx.AsyncClient(base_url=settings.rag_platform_base_url, timeout=30.0) as http_client:
         auth = RagPlatformAuth(settings.rag_platform_base_url, email, password, http_client)
         try:
-            token = await auth.get_access_token()
+            csrf_token = await auth.get_csrf_token()
         except RagPlatformAuthError:
             return None, "Login failed -- check your email and password."
-    return token, f"Logged in as {email}. Both tabs now use your own documents."
+        access_token = http_client.cookies.get("access_token")
+    if not access_token:
+        return None, "Login succeeded but no session cookie was issued -- please try again."
+    return UserSession(access_token=access_token, csrf_token=csrf_token), f"Logged in as {email}. Both tabs now use your own documents."
 
 
-async def run_direct_query(query: str, user_token: str | None = None) -> str:
+async def run_direct_query(query: str, user_session: UserSession | None = None) -> str:
     """Direct-RAG tab: one retrieval pass, top chunk's text returned as-is, no synthesis."""
-    client = _get_retrieval_client(user_token)
+    client = _get_retrieval_client(user_session)
     try:
         result = await client.search(query, top_k=1)
     except Exception as exc:
@@ -63,11 +68,11 @@ async def run_direct_query(query: str, user_token: str | None = None) -> str:
     return f"{top.text}\n\n(source: {top.source_filename})"
 
 
-async def run_agentic_query(query: str, user_token: str | None = None) -> tuple[str, str]:
+async def run_agentic_query(query: str, user_session: UserSession | None = None) -> tuple[str, str]:
     """Agentic-RAG tab: run the full graph, render the trace and the final (possibly refused) answer."""
-    graph = get_graph(user_token)
+    graph = get_graph(user_session)
     initial_state: GraphState = {
-        "query": query, "user_access_token": user_token, "gatekeeper_decision": None, "evidence": [],
+        "query": query, "user_session": user_session, "gatekeeper_decision": None, "evidence": [],
         "draft": None, "verification": None, "retry_count": 0, "final_answer": None, "refused": False,
         "trace": [],
     }
@@ -80,7 +85,7 @@ async def run_agentic_query(query: str, user_token: str | None = None) -> tuple[
 
 def build_ui() -> gr.Blocks:
     with gr.Blocks(title="Agentic RAG Orchestration") as demo:
-        user_token_state = gr.State(value=None)
+        user_session_state = gr.State(value=None)
 
         with gr.Accordion("Log in (optional -- see your own documents instead of the demo account)", open=False):
             with gr.Row():
@@ -88,19 +93,19 @@ def build_ui() -> gr.Blocks:
                 login_password = gr.Textbox(label="Password", type="password")
             login_button = gr.Button("Log in")
             login_status = gr.Textbox(label="Status", interactive=False)
-            login_button.click(login, inputs=[login_email, login_password], outputs=[user_token_state, login_status])
+            login_button.click(login, inputs=[login_email, login_password], outputs=[user_session_state, login_status])
 
         with gr.Tab("Direct RAG"):
             direct_input = gr.Textbox(label="Question")
             direct_output = gr.Textbox(label="Answer (single retrieval pass, no correction)")
-            direct_input.submit(run_direct_query, inputs=[direct_input, user_token_state], outputs=direct_output)
+            direct_input.submit(run_direct_query, inputs=[direct_input, user_session_state], outputs=direct_output)
 
         with gr.Tab("Agentic RAG"):
             agentic_input = gr.Textbox(label="Question")
             trace_output = gr.Textbox(label="Agent trace", lines=10)
             answer_output = gr.Textbox(label="Final answer")
             agentic_input.submit(
-                run_agentic_query, inputs=[agentic_input, user_token_state], outputs=[trace_output, answer_output]
+                run_agentic_query, inputs=[agentic_input, user_session_state], outputs=[trace_output, answer_output]
             )
 
     return demo

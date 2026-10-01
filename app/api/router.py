@@ -13,7 +13,7 @@ from fastapi import APIRouter, Header
 from fastapi.responses import StreamingResponse
 from langgraph.graph.state import CompiledStateGraph
 
-from app.agents.schemas import GraphState
+from app.agents.schemas import GraphState, UserSession
 from app.api.schemas import QueryRequest
 from app.core.config import get_settings
 from app.core.tracing import get_tracer
@@ -24,13 +24,16 @@ from app.rag_client.retrieval import RagPlatformRetrievalError
 _BEARER_PREFIX = "Bearer "
 
 
-def extract_bearer_token(authorization: str | None) -> str | None:
-    """Pull the token out of an `Authorization: Bearer <token>` header, or None if absent/malformed
-    (AGT-013) -- a missing/malformed header is not an error here, it just means "use the fixed
-    service account", so callers that never log in keep working exactly as before.
+def extract_user_session(authorization: str | None, csrf_token: str | None) -> UserSession | None:
+    """Build a `UserSession` from the request's headers, or None if either is absent/malformed
+    (AGT-013) -- a logged-in caller needs BOTH `Authorization: Bearer <access-token>` and
+    `X-RAG-CSRF-Token: <csrf-token>` (the platform's post-ERP-116 cookie+CSRF contract requires
+    both; see `app/rag_client/auth.py`'s module docstring). Missing either is not an error here,
+    it just means "use the fixed service account", so callers that never log in keep working
+    exactly as before.
     """
-    if authorization and authorization.startswith(_BEARER_PREFIX):
-        return authorization[len(_BEARER_PREFIX) :]
+    if authorization and authorization.startswith(_BEARER_PREFIX) and csrf_token:
+        return UserSession(access_token=authorization[len(_BEARER_PREFIX) :], csrf_token=csrf_token)
     return None
 
 logger = logging.getLogger(__name__)
@@ -42,13 +45,13 @@ router = APIRouter(tags=["query"])
 MCP_SERVER_COMMAND = [sys.executable, "-m", "app.mcp_server.server"]
 
 
-def get_graph(user_token: str | None = None):
+def get_graph(user_session: UserSession | None = None):
     """Build the compiled orchestration graph from current settings.
 
-    `user_token` (AGT-013): a logged-in end user's RAG-platform access token. When present, the
+    `user_session` (AGT-013): a logged-in end user's RAG-platform session. When present, the
     Gatekeeper's own exploratory search runs as that user (via `StaticTokenAuth`) instead of the
     fixed service account -- consistent with Research's MCP subprocess call, which separately
-    receives the same token through `GraphState` (see `app/graph/build.py`'s `research_node`).
+    receives the same session through `GraphState` (see `app/graph/build.py`'s `research_node`).
 
     A thin, separately-mockable seam: tests patch this function rather than the graph internals.
     """
@@ -62,8 +65,8 @@ def get_graph(user_token: str | None = None):
     model = get_model(settings)
     http_client = httpx.AsyncClient(base_url=settings.rag_platform_base_url, timeout=30.0)
     auth = (
-        StaticTokenAuth(user_token)
-        if user_token
+        StaticTokenAuth(user_session.access_token, user_session.csrf_token, http_client, settings.rag_platform_base_url)
+        if user_session
         else RagPlatformAuth(settings.rag_platform_base_url, settings.rag_platform_email, settings.rag_platform_password, http_client)
     )
     retrieval_client = RagPlatformRetrievalClient(settings.rag_platform_base_url, auth, http_client)
@@ -75,9 +78,11 @@ def _format_sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
-async def _event_stream(graph: CompiledStateGraph, query: str, user_token: str | None = None) -> AsyncIterator[str]:
+async def _event_stream(
+    graph: CompiledStateGraph, query: str, user_session: UserSession | None = None
+) -> AsyncIterator[str]:
     initial_state: GraphState = {
-        "query": query, "user_access_token": user_token, "gatekeeper_decision": None, "evidence": [],
+        "query": query, "user_session": user_session, "gatekeeper_decision": None, "evidence": [],
         "draft": None, "verification": None, "retry_count": 0, "final_answer": None, "refused": False,
         "trace": [],
     }
@@ -105,17 +110,22 @@ async def _event_stream(graph: CompiledStateGraph, query: str, user_token: str |
 
 
 @router.post("/query")
-async def query(request: QueryRequest, authorization: str | None = Header(default=None)) -> StreamingResponse:
+async def query(
+    request: QueryRequest,
+    authorization: str | None = Header(default=None),
+    x_rag_csrf_token: str | None = Header(default=None),
+) -> StreamingResponse:
     """Run a query through the agent graph and stream back its full trace and result as SSE.
 
     The trace is sent after the graph completes, not incrementally per step. The graph is built
     before the stream opens, so configuration errors (missing settings, etc.) propagate as a normal
     5xx response rather than a 200 with an empty body.
 
-    AGT-013: an optional `Authorization: Bearer <rag-platform-token>` header runs the query as
-    that logged-in end user (their own documents) instead of the fixed service account. Absent
-    or malformed, behavior is unchanged from before this header existed.
+    AGT-013: optional `Authorization: Bearer <rag-platform-access-token>` + `X-RAG-CSRF-Token`
+    headers (both required together) run the query as that logged-in end user (their own
+    documents) instead of the fixed service account. Absent or malformed, behavior is unchanged
+    from before these headers existed.
     """
-    user_token = extract_bearer_token(authorization)
-    graph = get_graph(user_token)
-    return StreamingResponse(_event_stream(graph, request.query, user_token), media_type="text/event-stream")
+    user_session = extract_user_session(authorization, x_rag_csrf_token)
+    graph = get_graph(user_session)
+    return StreamingResponse(_event_stream(graph, request.query, user_session), media_type="text/event-stream")

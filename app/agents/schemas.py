@@ -45,14 +45,26 @@ class VerificationResult(BaseModel):
     reasoning: str
 
 
+class UserSession(BaseModel):
+    """A logged-in end user's RAG-platform session (AGT-013), post-ERP-116: the platform delivers
+    access/refresh tokens as httpOnly cookies, so `access_token` here is the cookie *value* to
+    inject into the shared http client's cookie jar, not a bearer token to send as a header.
+    `csrf_token` is the matching double-submit token, required as `X-CSRF-Token` on every
+    state-changing request.
+    """
+
+    access_token: str
+    csrf_token: str
+
+
 class GraphState(TypedDict):
     """Shared state threaded through every LangGraph node."""
 
     query: str
-    # AGT-013: the logged-in end user's RAG-platform access token, if any -- threaded through to
+    # AGT-013: the logged-in end user's RAG-platform session, if any -- threaded through to
     # Research's MCP subprocess call so retrieval runs as that user. None means the fixed service
     # account is used instead (today's single-tenant behavior, unchanged).
-    user_access_token: str | None
+    user_session: UserSession | None
     gatekeeper_decision: GatekeeperDecision | None
     evidence: list[Evidence]
     draft: DraftAnswer | None
