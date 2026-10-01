@@ -1,6 +1,7 @@
 """Application configuration, loaded from environment variables."""
 
 from functools import lru_cache
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -18,8 +19,20 @@ class Settings(BaseSettings):
     # them, not the fixed service account above. Unset in the normal (no end-user auth) case.
     rag_platform_access_token: str | None = None
 
+    # AGT-004: "ollama" (default, local dev/free) or "openrouter" (deployment -- the local VM
+    # this project deploys alongside has no room to run Ollama; see docs/architecture.md).
+    llm_provider: Literal["ollama", "openrouter"] = "ollama"
+
     ollama_base_url: str = "http://localhost:11434/v1"
     ollama_model: str = "qwen3"
+
+    openrouter_api_key: str | None = None
+    # Both free-tier, both from a model family OpenRouter positions for agentic/tool-calling use
+    # (see .ai/sessions/ around 2026-10-01 for the research). Free-tier models get rate-limited
+    # hard and rotate without warning, so a second model is a real fallback, not a nicety --
+    # see get_model()'s FallbackModel wiring in app/agents/llm.py.
+    openrouter_model: str = "nvidia/nemotron-3-nano-30b-a3b:free"
+    openrouter_fallback_model: str | None = "nvidia/nemotron-3.5-lightning:free"
 
     langfuse_public_key: str | None = None
     langfuse_secret_key: str | None = None

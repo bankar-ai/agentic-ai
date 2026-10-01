@@ -55,11 +55,11 @@ def get_graph(user_token: str | None = None):
     settings = get_settings()
     import httpx
 
-    from app.agents.llm import get_ollama_model
+    from app.agents.llm import get_model
     from app.rag_client.auth import RagPlatformAuth, StaticTokenAuth
     from app.rag_client.retrieval import RagPlatformRetrievalClient
 
-    model = get_ollama_model(settings)
+    model = get_model(settings)
     http_client = httpx.AsyncClient(base_url=settings.rag_platform_base_url, timeout=30.0)
     auth = (
         StaticTokenAuth(user_token)
