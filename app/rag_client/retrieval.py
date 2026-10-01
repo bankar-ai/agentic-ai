@@ -8,7 +8,7 @@ exactly the parameters the real endpoint accepts: `top_k`, `rerank`, `expand_sec
 
 import httpx
 
-from app.rag_client.auth import RagPlatformAuth
+from app.rag_client.auth import RagPlatformAuthProvider
 from app.rag_client.schemas import RetrievalResult
 
 
@@ -19,7 +19,7 @@ class RagPlatformRetrievalError(RuntimeError):
 class RagPlatformRetrievalClient:
     """Calls `enterprise-rag-platform`'s retrieval API on behalf of this project's service user."""
 
-    def __init__(self, base_url: str, auth: RagPlatformAuth, http_client: httpx.AsyncClient) -> None:
+    def __init__(self, base_url: str, auth: RagPlatformAuthProvider, http_client: httpx.AsyncClient) -> None:
         self._base_url = base_url
         self._auth = auth
         self._http = http_client

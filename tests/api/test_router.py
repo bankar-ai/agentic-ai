@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 
-from app.api.router import MCP_SERVER_COMMAND
+from app.api.router import MCP_SERVER_COMMAND, extract_bearer_token
 from app.main import app
 from app.rag_client.retrieval import RagPlatformRetrievalError
 
@@ -72,3 +72,41 @@ def test_query_endpoint_rejects_empty_query():
     response = client.post("/query", json={"query": ""})
 
     assert response.status_code == 422
+
+
+def test_extract_bearer_token_parses_header():
+    assert extract_bearer_token("Bearer abc123") == "abc123"
+
+
+def test_extract_bearer_token_returns_none_when_absent_or_malformed():
+    assert extract_bearer_token(None) is None
+    assert extract_bearer_token("") is None
+    assert extract_bearer_token("abc123") is None  # missing "Bearer " prefix
+
+
+def test_query_endpoint_passes_user_token_to_get_graph_when_logged_in():
+    """AGT-013: an Authorization header must actually reach get_graph(), not be silently dropped."""
+    fake_final_state = {"final_answer": "answer", "refused": False, "trace": []}
+    fake_graph = AsyncMock()
+    fake_graph.ainvoke.return_value = fake_final_state
+
+    with patch("app.api.router.get_graph", return_value=fake_graph) as mock_get_graph:
+        client = TestClient(app)
+        client.post(
+            "/query", json={"query": "What is the capital of France?"},
+            headers={"Authorization": "Bearer user-token-123"},
+        )
+
+    mock_get_graph.assert_called_once_with("user-token-123")
+
+
+def test_query_endpoint_passes_none_to_get_graph_when_not_logged_in():
+    fake_final_state = {"final_answer": "answer", "refused": False, "trace": []}
+    fake_graph = AsyncMock()
+    fake_graph.ainvoke.return_value = fake_final_state
+
+    with patch("app.api.router.get_graph", return_value=fake_graph) as mock_get_graph:
+        client = TestClient(app)
+        client.post("/query", json={"query": "What is the capital of France?"})
+
+    mock_get_graph.assert_called_once_with(None)

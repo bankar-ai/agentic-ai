@@ -1,8 +1,11 @@
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import pytest
 
-from app.mcp_server.server import _search_knowledge_base_impl
+from app.core.config import Settings
+from app.mcp_server.server import _build_auth, _search_knowledge_base_impl
+from app.rag_client.auth import RagPlatformAuth, StaticTokenAuth
 from app.rag_client.schemas import RetrievalResult, RetrievedChunk
 
 
@@ -40,3 +43,28 @@ async def test_search_knowledge_base_empty_results():
     )
 
     assert result == []
+
+
+def test_build_auth_uses_static_token_when_access_token_set():
+    settings = Settings(
+        rag_platform_base_url="http://localhost:8000",
+        rag_platform_email="svc@example.com",
+        rag_platform_password="secret123",
+        rag_platform_access_token="user-supplied-token",
+    )
+
+    auth = _build_auth(settings, MagicMock(spec=httpx.AsyncClient))
+
+    assert isinstance(auth, StaticTokenAuth)
+
+
+def test_build_auth_falls_back_to_service_account_when_no_access_token():
+    settings = Settings(
+        rag_platform_base_url="http://localhost:8000",
+        rag_platform_email="svc@example.com",
+        rag_platform_password="secret123",
+    )
+
+    auth = _build_auth(settings, MagicMock(spec=httpx.AsyncClient))
+
+    assert isinstance(auth, RagPlatformAuth)

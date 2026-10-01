@@ -1,4 +1,4 @@
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -13,10 +13,10 @@ from app.graph.build import build_graph
 KB_EVIDENCE = [Evidence(text="Paris is the capital of France.", source="knowledge_base", citation="geo.pdf")]
 
 
-def _initial_state(query: str) -> dict:
+def _initial_state(query: str, user_access_token: str | None = None) -> dict:
     return {
-        "query": query, "gatekeeper_decision": None, "evidence": [], "draft": None,
-        "verification": None, "retry_count": 0, "final_answer": None, "refused": False, "trace": [],
+        "query": query, "user_access_token": user_access_token, "gatekeeper_decision": None, "evidence": [],
+        "draft": None, "verification": None, "retry_count": 0, "final_answer": None, "refused": False, "trace": [],
     }
 
 
@@ -69,6 +69,22 @@ async def test_graph_refuses_after_exhausting_retries():
 
     assert final_state["refused"] is True
     assert final_state["retry_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_research_node_forwards_user_access_token_from_state():
+    """AGT-013: a logged-in user's token in state must reach research(), not just the fixed account."""
+    research_mock = AsyncMock(return_value=AsyncMock(evidence=KB_EVIDENCE))
+    with (
+        patch("app.graph.build.grade_retrieval", AsyncMock(return_value=GatekeeperDecision(route="kb", reasoning="ok"))),
+        patch("app.graph.build.research", research_mock),
+        patch("app.graph.build.write_answer", AsyncMock(return_value=DraftAnswer(text="Paris [geo.pdf]", cited_evidence=KB_EVIDENCE))),
+        patch("app.graph.build.verify_answer", AsyncMock(return_value=VerificationResult(grounded=True, unsupported_claims=[], reasoning="ok"))),
+    ):
+        graph = build_graph(model=MagicMock(), retrieval_client=MagicMock(), mcp_server_command=["cmd"], max_retries=2)
+        await graph.ainvoke(_initial_state("What is the capital of France?", user_access_token="user-token-123"))
+
+    research_mock.assert_awaited_once_with(["cmd"], ANY, "What is the capital of France?", "user-token-123")
 
 
 @pytest.mark.asyncio

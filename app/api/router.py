@@ -9,7 +9,7 @@ import logging
 import sys
 from collections.abc import AsyncIterator
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Header
 from fastapi.responses import StreamingResponse
 from langgraph.graph.state import CompiledStateGraph
 
@@ -21,6 +21,18 @@ from app.graph.build import build_graph
 from app.rag_client.auth import RagPlatformAuthError
 from app.rag_client.retrieval import RagPlatformRetrievalError
 
+_BEARER_PREFIX = "Bearer "
+
+
+def extract_bearer_token(authorization: str | None) -> str | None:
+    """Pull the token out of an `Authorization: Bearer <token>` header, or None if absent/malformed
+    (AGT-013) -- a missing/malformed header is not an error here, it just means "use the fixed
+    service account", so callers that never log in keep working exactly as before.
+    """
+    if authorization and authorization.startswith(_BEARER_PREFIX):
+        return authorization[len(_BEARER_PREFIX) :]
+    return None
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["query"])
@@ -30,8 +42,13 @@ router = APIRouter(tags=["query"])
 MCP_SERVER_COMMAND = [sys.executable, "-m", "app.mcp_server.server"]
 
 
-def get_graph():
+def get_graph(user_token: str | None = None):
     """Build the compiled orchestration graph from current settings.
+
+    `user_token` (AGT-013): a logged-in end user's RAG-platform access token. When present, the
+    Gatekeeper's own exploratory search runs as that user (via `StaticTokenAuth`) instead of the
+    fixed service account -- consistent with Research's MCP subprocess call, which separately
+    receives the same token through `GraphState` (see `app/graph/build.py`'s `research_node`).
 
     A thin, separately-mockable seam: tests patch this function rather than the graph internals.
     """
@@ -39,12 +56,16 @@ def get_graph():
     import httpx
 
     from app.agents.llm import get_ollama_model
-    from app.rag_client.auth import RagPlatformAuth
+    from app.rag_client.auth import RagPlatformAuth, StaticTokenAuth
     from app.rag_client.retrieval import RagPlatformRetrievalClient
 
     model = get_ollama_model(settings)
     http_client = httpx.AsyncClient(base_url=settings.rag_platform_base_url, timeout=30.0)
-    auth = RagPlatformAuth(settings.rag_platform_base_url, settings.rag_platform_email, settings.rag_platform_password, http_client)
+    auth = (
+        StaticTokenAuth(user_token)
+        if user_token
+        else RagPlatformAuth(settings.rag_platform_base_url, settings.rag_platform_email, settings.rag_platform_password, http_client)
+    )
     retrieval_client = RagPlatformRetrievalClient(settings.rag_platform_base_url, auth, http_client)
     tracer = get_tracer(settings)
     return build_graph(model, retrieval_client, MCP_SERVER_COMMAND, settings.max_verification_retries, tracer)
@@ -54,10 +75,11 @@ def _format_sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
-async def _event_stream(graph: CompiledStateGraph, query: str) -> AsyncIterator[str]:
+async def _event_stream(graph: CompiledStateGraph, query: str, user_token: str | None = None) -> AsyncIterator[str]:
     initial_state: GraphState = {
-        "query": query, "gatekeeper_decision": None, "evidence": [], "draft": None,
-        "verification": None, "retry_count": 0, "final_answer": None, "refused": False, "trace": [],
+        "query": query, "user_access_token": user_token, "gatekeeper_decision": None, "evidence": [],
+        "draft": None, "verification": None, "retry_count": 0, "final_answer": None, "refused": False,
+        "trace": [],
     }
     # The 200 status and headers are already sent once this generator starts, so a failure here
     # can't become an HTTP error status -- it must surface as an explicit `error` event instead of
@@ -83,12 +105,17 @@ async def _event_stream(graph: CompiledStateGraph, query: str) -> AsyncIterator[
 
 
 @router.post("/query")
-async def query(request: QueryRequest) -> StreamingResponse:
+async def query(request: QueryRequest, authorization: str | None = Header(default=None)) -> StreamingResponse:
     """Run a query through the agent graph and stream back its full trace and result as SSE.
 
     The trace is sent after the graph completes, not incrementally per step. The graph is built
     before the stream opens, so configuration errors (missing settings, etc.) propagate as a normal
     5xx response rather than a 200 with an empty body.
+
+    AGT-013: an optional `Authorization: Bearer <rag-platform-token>` header runs the query as
+    that logged-in end user (their own documents) instead of the fixed service account. Absent
+    or malformed, behavior is unchanged from before this header existed.
     """
-    graph = get_graph()
-    return StreamingResponse(_event_stream(graph, request.query), media_type="text/event-stream")
+    user_token = extract_bearer_token(authorization)
+    graph = get_graph(user_token)
+    return StreamingResponse(_event_stream(graph, request.query, user_token), media_type="text/event-stream")

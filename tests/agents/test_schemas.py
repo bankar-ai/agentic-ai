@@ -20,6 +20,7 @@ def test_gatekeeper_decision_defaults():
 def test_graph_state_initial_shape():
     state: GraphState = {
         "query": "What is the capital of France?",
+        "user_access_token": None,
         "gatekeeper_decision": None,
         "evidence": [],
         "draft": None,

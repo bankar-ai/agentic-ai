@@ -13,7 +13,7 @@ from app.graph.build import build_graph
 
 def _initial_state(query: str) -> dict:
     return {
-        "query": query, "gatekeeper_decision": None, "evidence": [], "draft": None,
+        "query": query, "user_access_token": None, "gatekeeper_decision": None, "evidence": [], "draft": None,
         "verification": None, "retry_count": 0, "final_answer": None, "refused": False, "trace": [],
     }
 

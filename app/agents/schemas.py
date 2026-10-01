@@ -49,6 +49,10 @@ class GraphState(TypedDict):
     """Shared state threaded through every LangGraph node."""
 
     query: str
+    # AGT-013: the logged-in end user's RAG-platform access token, if any -- threaded through to
+    # Research's MCP subprocess call so retrieval runs as that user. None means the fixed service
+    # account is used instead (today's single-tenant behavior, unchanged).
+    user_access_token: str | None
     gatekeeper_decision: GatekeeperDecision | None
     evidence: list[Evidence]
     draft: DraftAnswer | None

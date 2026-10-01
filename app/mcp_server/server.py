@@ -8,8 +8,12 @@ from functools import lru_cache
 import httpx
 from mcp.server.mcpserver import MCPServer
 
-from app.core.config import get_settings
-from app.rag_client.auth import RagPlatformAuth
+from app.core.config import Settings, get_settings
+from app.rag_client.auth import (
+    RagPlatformAuth,
+    RagPlatformAuthProvider,
+    StaticTokenAuth,
+)
 from app.rag_client.retrieval import RagPlatformRetrievalClient
 
 mcp_server = MCPServer("rag-retrieval")
@@ -30,12 +34,22 @@ async def _search_knowledge_base_impl(
     ]
 
 
+def _build_auth(settings: Settings, http_client: httpx.AsyncClient) -> RagPlatformAuthProvider:
+    """AGT-013: a per-user token (forwarded via RAG_PLATFORM_ACCESS_TOKEN env) takes priority
+    over the fixed service account, so this subprocess retrieves as the end user when one is
+    logged in, and as the configured service account otherwise.
+    """
+    if settings.rag_platform_access_token:
+        return StaticTokenAuth(settings.rag_platform_access_token)
+    return RagPlatformAuth(
+        settings.rag_platform_base_url, settings.rag_platform_email, settings.rag_platform_password, http_client
+    )
+
+
 def _build_retrieval_client() -> RagPlatformRetrievalClient:
     settings = get_settings()
     http_client = httpx.AsyncClient(base_url=settings.rag_platform_base_url, timeout=30.0)
-    auth = RagPlatformAuth(
-        settings.rag_platform_base_url, settings.rag_platform_email, settings.rag_platform_password, http_client
-    )
+    auth = _build_auth(settings, http_client)
     return RagPlatformRetrievalClient(settings.rag_platform_base_url, auth, http_client)
 
 

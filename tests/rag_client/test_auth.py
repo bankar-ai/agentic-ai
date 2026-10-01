@@ -1,7 +1,7 @@
 import httpx
 import pytest
 
-from app.rag_client.auth import RagPlatformAuth, RagPlatformAuthError
+from app.rag_client.auth import RagPlatformAuth, RagPlatformAuthError, StaticTokenAuth
 
 
 @pytest.fixture
@@ -53,3 +53,19 @@ async def test_login_failure_raises_auth_error():
 
         with pytest.raises(RagPlatformAuthError):
             await auth.get_access_token()
+
+
+@pytest.mark.asyncio
+async def test_static_token_auth_returns_the_supplied_token():
+    auth = StaticTokenAuth("user-supplied-token")
+
+    assert await auth.get_access_token() == "user-supplied-token"
+    assert await auth.get_access_token() == "user-supplied-token"  # stable, no login involved
+
+
+@pytest.mark.asyncio
+async def test_static_token_auth_refresh_raises_instead_of_recovering():
+    auth = StaticTokenAuth("user-supplied-token")
+
+    with pytest.raises(RagPlatformAuthError):
+        await auth.refresh()

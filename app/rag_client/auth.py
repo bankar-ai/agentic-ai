@@ -5,6 +5,8 @@ obtained via email+password login (see its `app/auth/router.py`). This client lo
 caches the access token, and rotates via the refresh endpoint rather than re-logging-in per call.
 """
 
+from typing import Protocol
+
 import httpx
 
 from app.rag_client.schemas import TokenPair
@@ -12,6 +14,16 @@ from app.rag_client.schemas import TokenPair
 
 class RagPlatformAuthError(RuntimeError):
     """Raised when login or token refresh against `enterprise-rag-platform` fails."""
+
+
+class RagPlatformAuthProvider(Protocol):
+    """What `RagPlatformRetrievalClient` needs from an auth source -- satisfied by both
+    `RagPlatformAuth` (the fixed service account) and `StaticTokenAuth` (a per-user token,
+    AGT-013), so the retrieval client doesn't need to know which one it was given.
+    """
+
+    async def get_access_token(self) -> str: ...
+    async def refresh(self) -> str: ...
 
 
 class RagPlatformAuth:
@@ -50,3 +62,23 @@ class RagPlatformAuth:
         if response.status_code != 200:
             raise RagPlatformAuthError(f"Login failed: {response.status_code} {response.text}")
         return TokenPair(**response.json())
+
+
+class StaticTokenAuth:
+    """Wraps an already-issued end-user access token (AGT-013's multi-tenant path).
+
+    Used when a caller supplies their own `enterprise-rag-platform` token (e.g. via this
+    project's `Authorization` header) instead of the fixed service account `RagPlatformAuth`
+    logs in as. Has no password, so it cannot actually refresh -- an expired token means the
+    end user must log in again at the RAG platform, not something this adapter can recover
+    from on its own. Satisfies the same interface `RagPlatformRetrievalClient` expects.
+    """
+
+    def __init__(self, access_token: str) -> None:
+        self._access_token = access_token
+
+    async def get_access_token(self) -> str:
+        return self._access_token
+
+    async def refresh(self) -> str:
+        raise RagPlatformAuthError("Supplied access token expired or was rejected; please log in again.")

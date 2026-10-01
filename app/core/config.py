@@ -13,6 +13,10 @@ class Settings(BaseSettings):
     rag_platform_base_url: str
     rag_platform_email: str
     rag_platform_password: str
+    # Per-request override (AGT-013): when the MCP server subprocess is spawned on behalf of a
+    # logged-in end user, this carries their already-issued access token so retrieval runs as
+    # them, not the fixed service account above. Unset in the normal (no end-user auth) case.
+    rag_platform_access_token: str | None = None
 
     ollama_base_url: str = "http://localhost:11434/v1"
     ollama_model: str = "qwen3"

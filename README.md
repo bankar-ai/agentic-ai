@@ -18,6 +18,11 @@ Four agents run as a LangGraph state machine, each with PydanticAI-typed structu
    Writer's own citations (Self-RAG). An ungrounded draft loops back to Research until
    `MAX_VERIFICATION_RETRIES` is reached, and then the system refuses instead of guessing.
 
+**Multi-tenant**: by default every query uses one fixed `enterprise-rag-platform` service account
+(configured via `.env`). A caller can instead supply their own already-issued RAG-platform access
+token (`Authorization: Bearer <token>` on the API, or the login box in the demo UI) to query their
+own documents instead — see "Multi-tenant auth" below.
+
 Design: `docs/superpowers/specs/2026-09-28-agentic-rag-orchestration-design.md`.
 Implementation plan: `docs/superpowers/plans/2026-09-28-agentic-rag-orchestration.md`.
 
@@ -68,6 +73,20 @@ uv run python -m app.ui.app
 
 You don't need to start the MCP server yourself. The Research agent launches it on demand as a
 subprocess (`python -m app.mcp_server.server`), using the same interpreter as the app.
+
+## Multi-tenant auth
+
+`agentic-ai` never owns passwords or a user database — it only ever forwards an access token
+`enterprise-rag-platform` already issued. Two ways to use it:
+
+- **API**: add `Authorization: Bearer <rag-platform-access-token>` to `POST /query`. Get that
+  token the normal way, by calling the RAG platform's own `POST /auth/login` directly.
+- **Demo UI**: the "Log in" accordion above the two tabs calls the RAG platform's login for you
+  and holds the resulting token for the rest of your browser session — nothing is written to disk.
+
+Omit it entirely and both paths fall back to the fixed service account in `.env`, exactly as
+before this existed. An expired or rejected token surfaces as a clear error (API: `event: error`
+in the SSE stream; UI: "please log in again"), never a silent wrong answer.
 
 ## Development
 

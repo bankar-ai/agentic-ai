@@ -79,6 +79,48 @@ async def test_research_kb_route_wires_stdio_transport_and_calls_tool_directly(m
 
 
 @pytest.mark.asyncio
+async def test_research_kb_route_forwards_user_access_token_to_subprocess_env(monkeypatch):
+    """AGT-013: a logged-in user's token overrides the fixed service account for this one call,
+    forwarded to the MCP subprocess as RAG_PLATFORM_ACCESS_TOKEN (see mcp_server.server._build_auth).
+    """
+    monkeypatch.setenv("RAG_PLATFORM_BASE_URL", "http://rag.example")
+    monkeypatch.setenv("RAG_PLATFORM_EMAIL", "agent@example.com")
+    monkeypatch.setenv("RAG_PLATFORM_PASSWORD", "s3cret")
+    decision = GatekeeperDecision(route="kb", reasoning="ok")
+    chunks = [{"text": "answer", "source_filename": "doc.pdf", "section_path": [], "score": 0.9}]
+    _, _, transport_patch, toolset_patch = _patched_mcp(chunks)
+
+    with transport_patch as mock_transport_cls, toolset_patch:
+        await _research_kb(
+            mcp_server_command=MCP_COMMAND, decision=decision, query="q", user_access_token="user-token-123"
+        )
+
+    _, transport_kwargs = mock_transport_cls.call_args
+    env = transport_kwargs["env"]
+    assert env["RAG_PLATFORM_ACCESS_TOKEN"] == "user-token-123"
+    # The fixed service-account credentials are still forwarded too -- mcp_server.server's
+    # _build_auth prioritizes the access token when present, but doesn't require the caller to
+    # omit the others.
+    assert env["RAG_PLATFORM_EMAIL"] == "agent@example.com"
+
+
+@pytest.mark.asyncio
+async def test_research_kb_route_omits_access_token_env_when_not_logged_in(monkeypatch):
+    monkeypatch.setenv("RAG_PLATFORM_BASE_URL", "http://rag.example")
+    monkeypatch.setenv("RAG_PLATFORM_EMAIL", "agent@example.com")
+    monkeypatch.setenv("RAG_PLATFORM_PASSWORD", "s3cret")
+    decision = GatekeeperDecision(route="kb", reasoning="ok")
+    chunks = [{"text": "answer", "source_filename": "doc.pdf", "section_path": [], "score": 0.9}]
+    _, _, transport_patch, toolset_patch = _patched_mcp(chunks)
+
+    with transport_patch as mock_transport_cls, toolset_patch:
+        await _research_kb(mcp_server_command=MCP_COMMAND, decision=decision, query="q")
+
+    _, transport_kwargs = mock_transport_cls.call_args
+    assert "RAG_PLATFORM_ACCESS_TOKEN" not in transport_kwargs["env"]
+
+
+@pytest.mark.asyncio
 async def test_research_kb_route_labels_every_result_knowledge_base_in_code():
     """Evidence is built from the tool's structured result, not transcribed by an LLM: every item
     is labeled "knowledge_base" and cited by its real source filename, whatever else the chunk says.
