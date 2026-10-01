@@ -20,6 +20,65 @@ sufficiency, gather evidence, draft an answer, verify it against what was *actua
 platform's retrieval API is wrapped as a real MCP tool server (`app/mcp_server/`), called over
 stdio by the Research agent — a genuine protocol round-trip, not a direct function call.
 
+## Architecture Diagram
+
+Components that exist today are solid; planned/not-yet-built pieces (the hosted LLM provider,
+per-user auth) are dashed — mirroring `enterprise-rag-platform`'s drawio convention of
+solid/green-vs-dashed/grey for built-vs-planned, in Mermaid instead of draw.io (see `AGT-015`'s
+notes for why).
+
+```mermaid
+flowchart TB
+    Client["API caller / Gradio UI"]
+
+    subgraph svc["agentic-ai service"]
+        API["FastAPI POST /query<br/>(SSE response)"]
+        Auth["Per-user token<br/>(Authorization header)"]:::planned
+
+        subgraph graph["LangGraph state machine"]
+            GK["Gatekeeper<br/>grades retrieval, picks route"]
+            RS["Research<br/>kb: MCP tool call<br/>web_fallback: web search"]
+            WR["Writer<br/>drafts cited answer"]
+            VF["Verifier<br/>checks against real evidence"]
+
+            GK -->|kb / web_fallback| RS
+            RS --> WR
+            WR --> VF
+            VF -->|ungrounded, retries left| RS
+            VF -->|grounded| Done(["final answer"])
+            GK -->|refuse| Refuse(["refusal"])
+            VF -->|retries exhausted| Refuse
+        end
+
+        MCP["MCP tool server<br/>(stdio subprocess)<br/>search_knowledge_base"]
+        Tracer["Langfuse tracer<br/>(no-op if unconfigured)"]
+    end
+
+    RagPlatform[("enterprise-rag-platform<br/>auth + retrieval API")]
+    LLM["LLM provider<br/>Ollama (local dev) /<br/>OpenRouter (deployed)"]:::planned
+    Web[("Web search<br/>(ddgs, free)")]
+
+    Client -->|query, optional user token| API
+    API --> Auth
+    Auth --> graph
+    API --> graph
+
+    GK -.->|exploratory search| RagPlatform
+    RS --> MCP
+    MCP -->|search_knowledge_base| RagPlatform
+    RS -.->|web_fallback only| Web
+
+    GK -.-> LLM
+    WR -.-> LLM
+    VF -.-> LLM
+
+    graph -.-> Tracer
+    Tracer -.-> LangfuseCloud[("Langfuse Cloud")]
+
+    classDef planned stroke-dasharray: 5 5
+    class Auth,LLM planned
+```
+
 ## Relationship to Sibling Projects
 
 Part of a portfolio also including `enterprise-rag-platform` (self-hosted RAG platform) and a
