@@ -55,46 +55,67 @@ History belongs in `.ai/sessions/`, not here.
   Mermaid renders natively on GitHub and is plain-text-reviewable).
 - **Multi-tenant auth implemented** (2026-10-01, `AGT-013`/`AGT-014`): by default every query still
   uses the fixed service account (unchanged), but a caller can now supply their own already-issued
-  `enterprise-rag-platform` access token — via `Authorization: Bearer <token>` on the API, or the
-  Gradio demo's new login accordion — and the whole request (Gatekeeper's exploratory search *and*
-  Research's MCP subprocess call) runs as that user, seeing their own documents. `agentic-ai` never
-  owns passwords. New `StaticTokenAuth` adapter + `RagPlatformAuthProvider` Protocol in
-  `app/rag_client/auth.py`; the MCP subprocess receives the active identity per-call via a
-  `RAG_PLATFORM_ACCESS_TOKEN` env override, never baked into its own `.env`. 16 new tests (70
-  total), 92.62% coverage. **Live-verified against the real RAG platform deployment**, not just
-  mocks: a real user-supplied token retrieved real content; a bad token failed cleanly.
+  `enterprise-rag-platform` session — via `Authorization: Bearer <token>` + `X-RAG-CSRF-Token` on
+  the API, or the Gradio demo's new login accordion — and the whole request (Gatekeeper's
+  exploratory search *and* Research's MCP subprocess call) runs as that user, seeing their own
+  documents. `agentic-ai` never owns passwords. New `StaticTokenAuth` adapter +
+  `RagPlatformAuthProvider` Protocol in `app/rag_client/auth.py`; the MCP subprocess receives the
+  active identity per-call via `RAG_PLATFORM_ACCESS_TOKEN`/`RAG_PLATFORM_CSRF_TOKEN` env overrides,
+  never baked into its own `.env`. **Live-verified against the real RAG platform deployment**, not
+  just mocks: a real user-supplied session retrieved real content; a bad one failed cleanly.
+- **ERP-116 auth-contract rewrite** (2026-10-01, discovered and fixed during live Cloud Run
+  verification, not planned as its own ticket): the live `enterprise-rag-platform` deployment had
+  already shipped `ERP-116` (cookie + CSRF double-submit auth, no `Authorization: Bearer` support
+  at all), which the local dev instance this project had been tested against did not reflect. The
+  first live query failed with a `pydantic_core.ValidationError` on the old `TokenPair` schema.
+  Fixed by rewriting `app/rag_client/schemas.py`/`auth.py`/`retrieval.py`, `app/agents/schemas.py`
+  (`UserSession` replaces the old bearer-token field), `app/mcp_server/server.py`, `app/api/router.py`,
+  and `app/ui/app.py` to the real contract: login/refresh return `{user_id, csrf_token}`, tokens
+  arrive as httpOnly cookies carried automatically by a shared `httpx.AsyncClient` cookie jar, and
+  state-changing requests need `X-CSRF-Token` matching the `csrf_token` cookie (401 *and* 403 both
+  trigger one retry-with-refresh). All affected tests rewritten to mock realistic `Set-Cookie`
+  responses. This is the single most significant correctness finding of the project to date, and it
+  was only caught because the team tested against the real live deployment rather than stopping at
+  local/mocked verification.
+- **OpenRouter LLM provider live** (2026-10-01, `AGT-004`): `get_openrouter_model()` in
+  `app/agents/llm.py`, selected via `LLM_PROVIDER=openrouter`. Reuses
+  `enterprise-rag-platform`'s existing funded OpenRouter API key (no separate account/Workspace —
+  Workspace creation is dashboard-only). Model: `nvidia/nemotron-3-nano-30b-a3b:free` primary +
+  `nvidia/nemotron-3.5-lightning:free` fallback via PydanticAI's `FallbackModel`. Live-verified 3/3
+  successful on the Writer task that was flaky under local Ollama models — resolves `AGT-010`.
+- **Deployed to Cloud Run** (2026-10-01, `AGT-005`/`AGT-007`): live at
+  `https://agentic-ai-167676028188.us-central1.run.app` (512Mi/1cpu, scale-to-zero, free tier).
+  Secrets (`agentic-ai-rag-platform-password`, `agentic-ai-openrouter-api-key`) in GCP Secret
+  Manager, reusing existing credential values. `POST /query` verified end-to-end against the live
+  RAG platform. Recorded in `D:\github-projects\gcp-deployment-tracker.md`.
+- **Branch workflow established** (2026-10-01): `develop` for ongoing work, `main` reserved for
+  what's actually deployed — mirrors `enterprise-rag-platform`'s existing convention.
 
 ## Known Gaps / Follow-ups
 
 Tracked as tickets in `.ai/tickets/` rather than duplicated here in full — this section is a quick
 index, read the ticket for detail.
 
-**Blocking a real deployment** (in dependency order):
-- `AGT-004` — no hosted-LLM provider exists yet; the live GCP VM (958MB RAM) cannot run Ollama.
-- `AGT-005` — hosting target for this project's own service not yet decided (needs the project
-  owner's input: co-host the existing VM vs. Cloud Run).
+**Still blocking a fully-demoable live deployment:**
 - `AGT-006` — no service user or ingested content exists against the *live* RAG platform yet, only
-  a local one.
-- `AGT-007` — the actual go-live (credentials, routing, tracker entry), blocked on the three above.
+  a local one. The deployed Cloud Run service is live and reachable, but has nothing real to query
+  against yet — this is the one remaining open item in the deployment chain.
 
 **Not blocking deployment, worth doing:**
 - `AGT-008` — SSE/UI deliver the trace only after the graph completes, not per-step as the spec
   describes.
 - `AGT-009` — `get_graph()`'s clients (httpx, auth) are rebuilt and never reused/closed per request.
-- `AGT-010` — Writer/Verifier structured-output reliability with small local models is improved
-  (prompt + retry fix, `917e8ef`) but not fully solved; may be moot once `AGT-004` lands if a
-  hosted model proves more reliable.
 - `AGT-011` — evaluation milestone (Langfuse datasets/scores), soft-blocked on
   `enterprise-rag-platform`'s `ERP-112`.
 - `AGT-012` — small polish items from the final review (friendlier MCP error messages, an
   unclosed httpx client in the MCP server, inline-citation cross-checking).
 
-**Done** (`AGT-002`, `AGT-003`, `AGT-013`, `AGT-014`, `AGT-015`) — see each ticket for detail.
+**Done** (`AGT-002`, `AGT-003`, `AGT-004`, `AGT-005`, `AGT-007`, `AGT-010`, `AGT-013`, `AGT-014`,
+`AGT-015`) — see each ticket for detail.
 
 ## Next Planned Work
 
-- Resolve the four open decisions in `.ai/memory/decisions-in-progress.md` that block `AGT-004`
-  through `AGT-006` (OpenRouter account/model choice, hosting target, demo content) — these need
-  the project owner's input, not further engineering.
-- Then work the deployment chain (`AGT-004` → `AGT-005`/`AGT-006` → `AGT-007`) to get a real,
-  live, demoable deployment.
+- `AGT-006`: register a service user against the live `enterprise-rag-platform` deployment, ingest
+  real representative content (not another throwaway synthetic doc), and verify a real end-to-end
+  query through the live Cloud Run service. This is the only item left before the deployment is
+  genuinely demo-ready.

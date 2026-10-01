@@ -12,21 +12,6 @@ Once a decision is made, remove it from here and write it up in `.ai/adr/`.
   to a no-op when credentials are absent, so this is no longer a blocker on anything — it's purely
   about whether the two projects end up sharing one Langfuse Cloud account or each stand up their
   own. See `AGT-011`.
-- **OpenRouter account: shared with `enterprise-rag-platform`, or a separate one for this
-  project?** (`AGT-004`) `enterprise-rag-platform` already has a funded OpenRouter account
-  ($5 pay-as-you-go credit, per `gcp-deployment-tracker.md`). Reusing it means zero new cost/setup
-  but mixes two projects' usage/billing on one account; a separate account is cleaner but needs its
-  own funding. **Needs the project owner's call** — not decided here.
-- **Which OpenRouter model for the deployed path** (`AGT-004`, `AGT-010`): needs a real research
-  pass (same "don't trust cached knowledge for fast-moving LLM-API choices" rule this project has
-  followed throughout) — specifically whether a `:free` tier model is reliable enough at
-  tool-calling for this project's 4-agent structured-output needs, or a cheap-but-paid model is
-  worth the (likely small) cost.
-- **Hosting target for this project's own service** (`AGT-005`): co-host on the existing
-  `rag-platform-host` VM (zero new resources, but adds load to an already-thin 958MB-RAM host) vs.
-  Cloud Run (isolated, matches the portfolio's established "offload to serverless" pattern already
-  proven for `enterprise-rag-platform`'s docling service, new resource to track). **Needs the
-  project owner's call.**
 - **What content to ingest for the live demo** (`AGT-006`): a product/demo decision — what should
   the live, deployed system actually be queried about in an interview walkthrough? Not yet decided;
   see `AGT-006`'s Notes for the shape of the decision (ideally content that can demonstrate the
@@ -34,6 +19,14 @@ Once a decision is made, remove it from here and write it up in `.ai/adr/`.
 
 ## Resolved
 
+- **OpenRouter account and model choice** (2026-10-01, `AGT-004`): reuse
+  `enterprise-rag-platform`'s existing funded OpenRouter API key rather than a separate
+  account/Workspace (Workspace creation is dashboard-only, no unattended API — not worth blocking
+  on). Model: `nvidia/nemotron-3-nano-30b-a3b:free` primary, `nvidia/nemotron-3.5-lightning:free`
+  fallback. Live-verified 3/3 successful on the Writer task that was flaky under local models.
+- **Hosting target for this project's own service** (2026-10-01, `AGT-005`): Cloud Run, decided by
+  the project owner — zero free-tier cost, isolated from `rag-platform-host`'s thin resource
+  budget. Live at `https://agentic-ai-167676028188.us-central1.run.app`.
 - **Target role/interview type, framework-vs-from-scratch, concrete use case/scope** (2026-09-28
   brainstorming session). See
   `docs/superpowers/specs/2026-09-28-agentic-rag-orchestration-design.md` for the full design and
