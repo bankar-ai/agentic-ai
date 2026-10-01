@@ -12,12 +12,12 @@ Once a decision is made, remove it from here and write it up in `.ai/adr/`.
   to a no-op when credentials are absent, so this is no longer a blocker on anything — it's purely
   about whether the two projects end up sharing one Langfuse Cloud account or each stand up their
   own. See `AGT-011`.
-- **What content to ingest for the live demo** (`AGT-006`): a product/demo decision — what should
-  the live, deployed system actually be queried about in an interview walkthrough? Not yet decided;
-  see `AGT-006`'s Notes for the shape of the decision (ideally content that can demonstrate the
-  KB-hit, web-fallback, and refusal paths all in one coherent walkthrough).
-
 ## Resolved
+
+- **Whether anonymous visitors get a shared demo account** (2026-10-01, `AGT-006`): no. The
+  project owner rejected ingesting demo content under a shared service account; there is no
+  anonymous path at all now, so this also makes "what content to ingest for the demo" moot — every
+  caller demos against their own already-ingested `enterprise-rag-platform` content.
 
 - **OpenRouter account and model choice** (2026-10-01, `AGT-004`): reuse
   `enterprise-rag-platform`'s existing funded OpenRouter API key rather than a separate

@@ -8,6 +8,8 @@ from app.api.router import MCP_SERVER_COMMAND, extract_user_session
 from app.main import app
 from app.rag_client.retrieval import RagPlatformRetrievalError
 
+_AUTH_HEADERS = {"Authorization": "Bearer user-token-123", "X-RAG-CSRF-Token": "user-csrf-456"}
+
 
 def test_query_endpoint_streams_steps_and_result():
     fake_final_state = {
@@ -19,7 +21,7 @@ def test_query_endpoint_streams_steps_and_result():
 
     with patch("app.api.router.get_graph", return_value=fake_graph):
         client = TestClient(app)
-        response = client.post("/query", json={"query": "What is the capital of France?"})
+        response = client.post("/query", json={"query": "What is the capital of France?"}, headers=_AUTH_HEADERS)
 
     assert response.status_code == 200
     assert "event: step" in response.text
@@ -34,7 +36,7 @@ def test_query_endpoint_surfaces_rag_platform_outage_as_error_event():
 
     with patch("app.api.router.get_graph", return_value=fake_graph):
         client = TestClient(app)
-        response = client.post("/query", json={"query": "What is the capital of France?"})
+        response = client.post("/query", json={"query": "What is the capital of France?"}, headers=_AUTH_HEADERS)
 
     assert response.text != ""
     assert "event: error" in response.text
@@ -48,7 +50,7 @@ def test_query_endpoint_surfaces_unexpected_failure_as_error_event():
 
     with patch("app.api.router.get_graph", return_value=fake_graph):
         client = TestClient(app)
-        response = client.post("/query", json={"query": "What is the capital of France?"})
+        response = client.post("/query", json={"query": "What is the capital of France?"}, headers=_AUTH_HEADERS)
 
     assert "event: error" in response.text
     assert "internal detail" not in response.text
@@ -58,9 +60,18 @@ def test_query_endpoint_returns_5xx_when_graph_cannot_be_built():
     """Configuration errors are raised before the stream opens, so they become a real 5xx."""
     with patch("app.api.router.get_graph", side_effect=RuntimeError("missing RAG_PLATFORM_BASE_URL")):
         client = TestClient(app, raise_server_exceptions=False)
-        response = client.post("/query", json={"query": "What is the capital of France?"})
+        response = client.post("/query", json={"query": "What is the capital of France?"}, headers=_AUTH_HEADERS)
 
     assert response.status_code == 500
+
+
+def test_query_endpoint_returns_401_when_not_logged_in():
+    """AGT-006: there is no anonymous/service-account fallback -- a caller without a valid
+    RAG-platform session must be rejected, not served a demo account's results."""
+    client = TestClient(app)
+    response = client.post("/query", json={"query": "What is the capital of France?"})
+
+    assert response.status_code == 401
 
 
 def test_mcp_server_command_uses_running_interpreter():
@@ -103,13 +114,10 @@ def test_query_endpoint_passes_user_session_to_get_graph_when_logged_in():
     mock_get_graph.assert_called_once_with(UserSession(access_token="user-token-123", csrf_token="user-csrf-456"))
 
 
-def test_query_endpoint_passes_none_to_get_graph_when_not_logged_in():
-    fake_final_state = {"final_answer": "answer", "refused": False, "trace": []}
-    fake_graph = AsyncMock()
-    fake_graph.ainvoke.return_value = fake_final_state
-
-    with patch("app.api.router.get_graph", return_value=fake_graph) as mock_get_graph:
+def test_query_endpoint_does_not_call_get_graph_when_not_logged_in():
+    """AGT-006: no session must never reach get_graph() at all -- it's rejected before that."""
+    with patch("app.api.router.get_graph") as mock_get_graph:
         client = TestClient(app)
         client.post("/query", json={"query": "What is the capital of France?"})
 
-    mock_get_graph.assert_called_once_with(None)
+    mock_get_graph.assert_not_called()

@@ -9,7 +9,7 @@ import logging
 import sys
 from collections.abc import AsyncIterator
 
-from fastapi import APIRouter, Header
+from fastapi import APIRouter, Header, HTTPException
 from fastapi.responses import StreamingResponse
 from langgraph.graph.state import CompiledStateGraph
 
@@ -26,11 +26,11 @@ _BEARER_PREFIX = "Bearer "
 
 def extract_user_session(authorization: str | None, csrf_token: str | None) -> UserSession | None:
     """Build a `UserSession` from the request's headers, or None if either is absent/malformed
-    (AGT-013) -- a logged-in caller needs BOTH `Authorization: Bearer <access-token>` and
+    (AGT-013/AGT-006) -- a logged-in caller needs BOTH `Authorization: Bearer <access-token>` and
     `X-RAG-CSRF-Token: <csrf-token>` (the platform's post-ERP-116 cookie+CSRF contract requires
-    both; see `app/rag_client/auth.py`'s module docstring). Missing either is not an error here,
-    it just means "use the fixed service account", so callers that never log in keep working
-    exactly as before.
+    both; see `app/rag_client/auth.py`'s module docstring). There is no anonymous fallback: every
+    caller must bring their own `enterprise-rag-platform` account, so a missing/malformed header
+    here means the caller is not logged in, and the endpoint below rejects the request.
     """
     if authorization and authorization.startswith(_BEARER_PREFIX) and csrf_token:
         return UserSession(access_token=authorization[len(_BEARER_PREFIX) :], csrf_token=csrf_token)
@@ -45,13 +45,13 @@ router = APIRouter(tags=["query"])
 MCP_SERVER_COMMAND = [sys.executable, "-m", "app.mcp_server.server"]
 
 
-def get_graph(user_session: UserSession | None = None):
-    """Build the compiled orchestration graph from current settings.
+def get_graph(user_session: UserSession):
+    """Build the compiled orchestration graph from current settings, scoped to `user_session`.
 
-    `user_session` (AGT-013): a logged-in end user's RAG-platform session. When present, the
-    Gatekeeper's own exploratory search runs as that user (via `StaticTokenAuth`) instead of the
-    fixed service account -- consistent with Research's MCP subprocess call, which separately
-    receives the same session through `GraphState` (see `app/graph/build.py`'s `research_node`).
+    `user_session` (AGT-013/AGT-006): a logged-in end user's RAG-platform session. There is no
+    anonymous/service-account fallback -- every query runs as a real `enterprise-rag-platform`
+    account, via `StaticTokenAuth`. The Gatekeeper's own exploratory search and Research's MCP
+    subprocess call both use this same identity (see `app/graph/build.py`'s `research_node`).
 
     A thin, separately-mockable seam: tests patch this function rather than the graph internals.
     """
@@ -59,16 +59,12 @@ def get_graph(user_session: UserSession | None = None):
     import httpx
 
     from app.agents.llm import get_model
-    from app.rag_client.auth import RagPlatformAuth, StaticTokenAuth
+    from app.rag_client.auth import StaticTokenAuth
     from app.rag_client.retrieval import RagPlatformRetrievalClient
 
     model = get_model(settings)
     http_client = httpx.AsyncClient(base_url=settings.rag_platform_base_url, timeout=30.0)
-    auth = (
-        StaticTokenAuth(user_session.access_token, user_session.csrf_token, http_client, settings.rag_platform_base_url)
-        if user_session
-        else RagPlatformAuth(settings.rag_platform_base_url, settings.rag_platform_email, settings.rag_platform_password, http_client)
-    )
+    auth = StaticTokenAuth(user_session.access_token, user_session.csrf_token, http_client, settings.rag_platform_base_url)
     retrieval_client = RagPlatformRetrievalClient(settings.rag_platform_base_url, auth, http_client)
     tracer = get_tracer(settings)
     return build_graph(model, retrieval_client, MCP_SERVER_COMMAND, settings.max_verification_retries, tracer)
@@ -121,11 +117,16 @@ async def query(
     before the stream opens, so configuration errors (missing settings, etc.) propagate as a normal
     5xx response rather than a 200 with an empty body.
 
-    AGT-013: optional `Authorization: Bearer <rag-platform-access-token>` + `X-RAG-CSRF-Token`
-    headers (both required together) run the query as that logged-in end user (their own
-    documents) instead of the fixed service account. Absent or malformed, behavior is unchanged
-    from before these headers existed.
+    AGT-013/AGT-006: requires `Authorization: Bearer <rag-platform-access-token>` +
+    `X-RAG-CSRF-Token` headers together, identifying a real `enterprise-rag-platform` account.
+    There is no anonymous/service-account fallback -- a caller who isn't logged in gets 401, not a
+    demo account's results.
     """
     user_session = extract_user_session(authorization, x_rag_csrf_token)
+    if user_session is None:
+        raise HTTPException(
+            status_code=401,
+            detail="Log in with your enterprise-rag-platform account (Authorization + X-RAG-CSRF-Token headers) to use this service.",
+        )
     graph = get_graph(user_session)
     return StreamingResponse(_event_stream(graph, request.query, user_session), media_type="text/event-stream")

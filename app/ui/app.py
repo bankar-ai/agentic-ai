@@ -4,10 +4,11 @@ finished -- not streamed step by step), so the value of the correction loop is s
 explained. The Agentic tab runs the graph in-process via `get_graph()` rather than calling the
 SSE endpoint. Not a production UI.
 
-AGT-014: an optional login row lets a visitor authenticate directly against
+AGT-014/AGT-006: a login row lets a visitor authenticate directly against
 `enterprise-rag-platform` (this UI never sees or stores a password beyond that one call) and see
-their own documents in both tabs, via AGT-013's per-request token support. Logging in is entirely
-optional -- without it, both tabs behave exactly as before (the fixed service account).
+their own documents in both tabs, via AGT-013's per-request token support. Logging in is required
+-- there is no anonymous/demo-account fallback, so both tabs refuse to query until a session
+exists.
 """
 
 import gradio as gr
@@ -19,15 +20,13 @@ from app.core.config import get_settings
 from app.rag_client.auth import RagPlatformAuth, RagPlatformAuthError, StaticTokenAuth
 from app.rag_client.retrieval import RagPlatformRetrievalClient
 
+_LOGIN_REQUIRED_MESSAGE = "Please log in with your enterprise-rag-platform account above to use this demo."
 
-def _get_retrieval_client(user_session: UserSession | None = None) -> RagPlatformRetrievalClient:
+
+def _get_retrieval_client(user_session: UserSession) -> RagPlatformRetrievalClient:
     settings = get_settings()
     http_client = httpx.AsyncClient(base_url=settings.rag_platform_base_url, timeout=30.0)
-    auth = (
-        StaticTokenAuth(user_session.access_token, user_session.csrf_token, http_client, settings.rag_platform_base_url)
-        if user_session
-        else RagPlatformAuth(settings.rag_platform_base_url, settings.rag_platform_email, settings.rag_platform_password, http_client)
-    )
+    auth = StaticTokenAuth(user_session.access_token, user_session.csrf_token, http_client, settings.rag_platform_base_url)
     return RagPlatformRetrievalClient(settings.rag_platform_base_url, auth, http_client)
 
 
@@ -55,6 +54,8 @@ async def login(email: str, password: str) -> tuple[UserSession | None, str]:
 
 async def run_direct_query(query: str, user_session: UserSession | None = None) -> str:
     """Direct-RAG tab: one retrieval pass, top chunk's text returned as-is, no synthesis."""
+    if user_session is None:
+        return _LOGIN_REQUIRED_MESSAGE
     client = _get_retrieval_client(user_session)
     try:
         result = await client.search(query, top_k=1)
@@ -70,6 +71,8 @@ async def run_direct_query(query: str, user_session: UserSession | None = None) 
 
 async def run_agentic_query(query: str, user_session: UserSession | None = None) -> tuple[str, str]:
     """Agentic-RAG tab: run the full graph, render the trace and the final (possibly refused) answer."""
+    if user_session is None:
+        return "", _LOGIN_REQUIRED_MESSAGE
     graph = get_graph(user_session)
     initial_state: GraphState = {
         "query": query, "user_session": user_session, "gatekeeper_decision": None, "evidence": [],
@@ -87,7 +90,7 @@ def build_ui() -> gr.Blocks:
     with gr.Blocks(title="Agentic RAG Orchestration") as demo:
         user_session_state = gr.State(value=None)
 
-        with gr.Accordion("Log in (optional -- see your own documents instead of the demo account)", open=False):
+        with gr.Accordion("Log in (required -- there is no demo account, bring your own enterprise-rag-platform login)", open=True):
             with gr.Row():
                 login_email = gr.Textbox(label="Email")
                 login_password = gr.Textbox(label="Password", type="password")

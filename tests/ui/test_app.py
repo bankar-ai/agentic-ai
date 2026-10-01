@@ -15,6 +15,9 @@ def test_build_ui_returns_blocks_with_two_tabs():
     assert isinstance(demo, gr.Blocks)
 
 
+_SESSION = UserSession(access_token="user-token-123", csrf_token="user-csrf-456")
+
+
 @pytest.mark.asyncio
 async def test_run_direct_query_returns_plain_answer_text():
     fake_client = AsyncMock()
@@ -23,9 +26,19 @@ async def test_run_direct_query_returns_plain_answer_text():
     )
 
     with patch("app.ui.app._get_retrieval_client", return_value=fake_client):
-        answer = await run_direct_query("What is the capital of France?")
+        answer = await run_direct_query("What is the capital of France?", user_session=_SESSION)
 
     assert "Paris" in answer
+
+
+@pytest.mark.asyncio
+async def test_run_direct_query_without_session_returns_login_required_message():
+    """AGT-006: no demo account -- querying without a session must not reach the retrieval client."""
+    with patch("app.ui.app._get_retrieval_client") as mock_get_client:
+        answer = await run_direct_query("What is the capital of France?")
+
+    mock_get_client.assert_not_called()
+    assert "log in" in answer.lower()
 
 
 @pytest.mark.asyncio
@@ -38,10 +51,21 @@ async def test_run_agentic_query_returns_trace_and_answer():
     fake_graph.ainvoke.return_value = fake_state
 
     with patch("app.ui.app.get_graph", return_value=fake_graph):
-        trace_text, answer_text = await run_agentic_query("What is the capital of France?")
+        trace_text, answer_text = await run_agentic_query("What is the capital of France?", user_session=_SESSION)
 
     assert "gatekeeper" in trace_text
     assert "Paris" in answer_text
+
+
+@pytest.mark.asyncio
+async def test_run_agentic_query_without_session_returns_login_required_message():
+    """AGT-006: no demo account -- querying without a session must not reach get_graph()."""
+    with patch("app.ui.app.get_graph") as mock_get_graph:
+        trace_text, answer_text = await run_agentic_query("What is the capital of France?")
+
+    mock_get_graph.assert_not_called()
+    assert trace_text == ""
+    assert "log in" in answer_text.lower()
 
 
 @pytest.mark.asyncio

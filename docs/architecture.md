@@ -22,10 +22,11 @@ stdio by the Research agent — a genuine protocol round-trip, not a direct func
 
 ## Architecture Diagram
 
-Components that exist today are solid; planned/not-yet-built pieces (the hosted LLM provider,
-per-user auth) are dashed — mirroring `enterprise-rag-platform`'s drawio convention of
-solid/green-vs-dashed/grey for built-vs-planned, in Mermaid instead of draw.io (see `AGT-015`'s
-notes for why).
+As of `AGT-004`/`AGT-006`/`AGT-013`/`AGT-014`, every piece below is built and live — there is no
+longer a planned/not-yet-built tier. Auth is **mandatory**, not optional: there is no
+anonymous/service-account fallback, so a caller must bring their own `enterprise-rag-platform`
+login (`Authorization: Bearer <token>` + `X-RAG-CSRF-Token` on the API, or the Gradio demo's login
+form) or the request is rejected with 401 before the graph ever runs.
 
 ```mermaid
 flowchart TB
@@ -33,7 +34,7 @@ flowchart TB
 
     subgraph svc["agentic-ai service"]
         API["FastAPI POST /query<br/>(SSE response)"]
-        Auth["Per-user token<br/>(Authorization header)"]:::planned
+        Auth["Required user session<br/>(Authorization + X-RAG-CSRF-Token)<br/>401 if absent"]
 
         subgraph graph["LangGraph state machine"]
             GK["Gatekeeper<br/>grades retrieval, picks route"]
@@ -54,18 +55,18 @@ flowchart TB
         Tracer["Langfuse tracer<br/>(no-op if unconfigured)"]
     end
 
-    RagPlatform[("enterprise-rag-platform<br/>auth + retrieval API")]
-    LLM["LLM provider<br/>Ollama (local dev) /<br/>OpenRouter (deployed)"]:::planned
+    RagPlatform[("enterprise-rag-platform<br/>auth + retrieval API<br/>(caller's own account)")]
+    LLM["LLM provider<br/>Ollama (local dev) /<br/>OpenRouter (deployed)"]
     Web[("Web search<br/>(ddgs, free)")]
 
-    Client -->|query, optional user token| API
+    Client -->|query + required user session| API
     API --> Auth
-    Auth --> graph
-    API --> graph
+    Auth -->|session valid| graph
+    Auth -.->|session missing/invalid| Reject(["401 Unauthorized"])
 
-    GK -.->|exploratory search| RagPlatform
+    GK -.->|exploratory search, as the caller| RagPlatform
     RS --> MCP
-    MCP -->|search_knowledge_base| RagPlatform
+    MCP -->|search_knowledge_base, as the caller| RagPlatform
     RS -.->|web_fallback only| Web
 
     GK -.-> LLM
@@ -74,9 +75,6 @@ flowchart TB
 
     graph -.-> Tracer
     Tracer -.-> LangfuseCloud[("Langfuse Cloud")]
-
-    classDef planned stroke-dasharray: 5 5
-    class Auth,LLM planned
 ```
 
 ## Relationship to Sibling Projects

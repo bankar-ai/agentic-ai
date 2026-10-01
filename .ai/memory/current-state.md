@@ -90,16 +90,18 @@ History belongs in `.ai/sessions/`, not here.
   RAG platform. Recorded in `D:\github-projects\gcp-deployment-tracker.md`.
 - **Branch workflow established** (2026-10-01): `develop` for ongoing work, `main` reserved for
   what's actually deployed — mirrors `enterprise-rag-platform`'s existing convention.
+- **Anonymous/service-account fallback removed** (2026-10-01, `AGT-006`, superseding its original
+  "ingest demo content" plan): the project owner decided there is no shared demo account — every
+  caller must bring their own `enterprise-rag-platform` login. `POST /query` now returns 401
+  without a valid `Authorization` + `X-RAG-CSRF-Token` session; `get_graph()` and
+  `_get_retrieval_client()` require a real `UserSession` (no more `| None` fallback to the fixed
+  service account); both Gradio tabs refuse to query until logged in. `RAG_PLATFORM_EMAIL`/
+  `PASSWORD` remain only as a local-dev convenience for running the MCP server standalone.
 
 ## Known Gaps / Follow-ups
 
 Tracked as tickets in `.ai/tickets/` rather than duplicated here in full — this section is a quick
 index, read the ticket for detail.
-
-**Still blocking a fully-demoable live deployment:**
-- `AGT-006` — no service user or ingested content exists against the *live* RAG platform yet, only
-  a local one. The deployed Cloud Run service is live and reachable, but has nothing real to query
-  against yet — this is the one remaining open item in the deployment chain.
 
 **Not blocking deployment, worth doing:**
 - `AGT-008` — SSE/UI deliver the trace only after the graph completes, not per-step as the spec
@@ -110,12 +112,11 @@ index, read the ticket for detail.
 - `AGT-012` — small polish items from the final review (friendlier MCP error messages, an
   unclosed httpx client in the MCP server, inline-citation cross-checking).
 
-**Done** (`AGT-002`, `AGT-003`, `AGT-004`, `AGT-005`, `AGT-007`, `AGT-010`, `AGT-013`, `AGT-014`,
-`AGT-015`) — see each ticket for detail.
+**Done** (`AGT-002`, `AGT-003`, `AGT-004`, `AGT-005`, `AGT-006`, `AGT-007`, `AGT-010`, `AGT-013`,
+`AGT-014`, `AGT-015`) — see each ticket for detail.
 
 ## Next Planned Work
 
-- `AGT-006`: register a service user against the live `enterprise-rag-platform` deployment, ingest
-  real representative content (not another throwaway synthetic doc), and verify a real end-to-end
-  query through the live Cloud Run service. This is the only item left before the deployment is
-  genuinely demo-ready.
+- No blocking items remain in the original deployment chain. Anyone demoing this project live
+  needs their own `enterprise-rag-platform` account with real content already ingested on it —
+  that's now the demo's precondition, not something `agentic-ai` provisions for them.

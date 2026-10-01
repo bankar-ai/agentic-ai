@@ -18,10 +18,10 @@ Four agents run as a LangGraph state machine, each with PydanticAI-typed structu
    Writer's own citations (Self-RAG). An ungrounded draft loops back to Research until
    `MAX_VERIFICATION_RETRIES` is reached, and then the system refuses instead of guessing.
 
-**Multi-tenant**: by default every query uses one fixed `enterprise-rag-platform` service account
-(configured via `.env`). A caller can instead supply their own already-issued RAG-platform access
-token (`Authorization: Bearer <token>` on the API, or the login box in the demo UI) to query their
-own documents instead — see "Multi-tenant auth" below.
+**Multi-tenant, login required**: there is no anonymous or shared-demo-account path. Every caller
+must supply their own already-issued `enterprise-rag-platform` session (`Authorization: Bearer
+<token>` + `X-RAG-CSRF-Token` on the API, or the login box in the demo UI) and every query runs
+against that account's own documents — see "Multi-tenant auth" below.
 
 Design: `docs/superpowers/specs/2026-09-28-agentic-rag-orchestration-design.md`.
 Implementation plan: `docs/superpowers/plans/2026-09-28-agentic-rag-orchestration.md`.
@@ -32,9 +32,12 @@ Implementation plan: `docs/superpowers/plans/2026-09-28-agentic-rag-orchestratio
 - **Ollama** running locally with the configured model pulled (default `qwen3`):
   `ollama pull qwen3`. The agents use its OpenAI-compatible endpoint (`OLLAMA_BASE_URL`,
   default `http://localhost:11434/v1`).
-- **`enterprise-rag-platform`** running and reachable at `RAG_PLATFORM_BASE_URL`, with a user
-  account for `RAG_PLATFORM_EMAIL` / `RAG_PLATFORM_PASSWORD`. If the platform is down or rejects
-  the credentials, the API returns an explicit `event: error` rather than an answer.
+- **`enterprise-rag-platform`** running and reachable at `RAG_PLATFORM_BASE_URL`. Every caller
+  brings their own account (see "Multi-tenant auth" below) — `RAG_PLATFORM_EMAIL` /
+  `RAG_PLATFORM_PASSWORD` are only used as a local-dev fallback when running the MCP server
+  standalone (`python -m app.mcp_server.server`, outside the API/UI's per-caller session flow). If
+  the platform is down or rejects a session, the API returns an explicit `event: error` rather
+  than an answer.
 - **Langfuse** (optional): set `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` to trace each agent
   step. If they're left empty, tracing is a no-op.
 - **Internet access**, only for the web-search fallback route.
@@ -76,17 +79,21 @@ subprocess (`python -m app.mcp_server.server`), using the same interpreter as th
 
 ## Multi-tenant auth
 
-`agentic-ai` never owns passwords or a user database — it only ever forwards an access token
-`enterprise-rag-platform` already issued. Two ways to use it:
+`agentic-ai` never owns passwords or a user database — it only ever forwards a session
+`enterprise-rag-platform` already issued. **There is no anonymous or shared-demo-account
+fallback**: a request without a valid session is rejected, not served against someone else's
+documents. Two ways to supply one:
 
-- **API**: add `Authorization: Bearer <rag-platform-access-token>` to `POST /query`. Get that
-  token the normal way, by calling the RAG platform's own `POST /auth/login` directly.
+- **API**: add `Authorization: Bearer <rag-platform-access-token>` *and* `X-RAG-CSRF-Token:
+  <csrf-token>` to `POST /query` (both required together). Get them the normal way, by calling
+  the RAG platform's own `POST /auth/login` directly. Missing or malformed, the API returns
+  `401 Unauthorized` before the graph ever runs.
 - **Demo UI**: the "Log in" accordion above the two tabs calls the RAG platform's login for you
-  and holds the resulting token for the rest of your browser session — nothing is written to disk.
+  and holds the resulting session for the rest of your browser session — nothing is written to
+  disk. Both tabs refuse to query ("Please log in...") until you do.
 
-Omit it entirely and both paths fall back to the fixed service account in `.env`, exactly as
-before this existed. An expired or rejected token surfaces as a clear error (API: `event: error`
-in the SSE stream; UI: "please log in again"), never a silent wrong answer.
+An expired or rejected session surfaces as a clear error (API: `event: error` in the SSE stream;
+UI: "please log in again"), never a silent wrong answer or someone else's data.
 
 ## Development
 
