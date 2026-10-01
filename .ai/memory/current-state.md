@@ -47,6 +47,22 @@ History belongs in `.ai/sessions/`, not here.
   document ingested, for smoke testing. Credentials saved to
   `C:\Users\Pankaj\.credentials\agentic-ai-credentials.md` per this portfolio's credentials policy,
   and to this repo's local (gitignored) `.env`.
+- **Secrets hygiene verified and automated** (2026-10-01, `AGT-002`): Gitleaks pre-commit hook +
+  CI backstop added (this repo had no CI workflow at all before this). A full 36-commit history
+  scan found no leaked secrets ever.
+- **Architecture diagram added** (2026-10-01, `AGT-015`): a Mermaid flowchart in
+  `docs/architecture.md` (not draw.io — no GUI tool available to produce/verify one reliably;
+  Mermaid renders natively on GitHub and is plain-text-reviewable).
+- **Multi-tenant auth implemented** (2026-10-01, `AGT-013`/`AGT-014`): by default every query still
+  uses the fixed service account (unchanged), but a caller can now supply their own already-issued
+  `enterprise-rag-platform` access token — via `Authorization: Bearer <token>` on the API, or the
+  Gradio demo's new login accordion — and the whole request (Gatekeeper's exploratory search *and*
+  Research's MCP subprocess call) runs as that user, seeing their own documents. `agentic-ai` never
+  owns passwords. New `StaticTokenAuth` adapter + `RagPlatformAuthProvider` Protocol in
+  `app/rag_client/auth.py`; the MCP subprocess receives the active identity per-call via a
+  `RAG_PLATFORM_ACCESS_TOKEN` env override, never baked into its own `.env`. 16 new tests (70
+  total), 92.62% coverage. **Live-verified against the real RAG platform deployment**, not just
+  mocks: a real user-supplied token retrieved real content; a bad token failed cleanly.
 
 ## Known Gaps / Follow-ups
 
@@ -62,7 +78,6 @@ index, read the ticket for detail.
 - `AGT-007` — the actual go-live (credentials, routing, tracker entry), blocked on the three above.
 
 **Not blocking deployment, worth doing:**
-- `AGT-002` — Gitleaks pre-commit/CI hooks, required per `CLAUDE.md`, not yet set up.
 - `AGT-008` — SSE/UI deliver the trace only after the graph completes, not per-step as the spec
   describes.
 - `AGT-009` — `get_graph()`'s clients (httpx, auth) are rebuilt and never reused/closed per request.
@@ -73,6 +88,8 @@ index, read the ticket for detail.
   `enterprise-rag-platform`'s `ERP-112`.
 - `AGT-012` — small polish items from the final review (friendlier MCP error messages, an
   unclosed httpx client in the MCP server, inline-citation cross-checking).
+
+**Done** (`AGT-002`, `AGT-003`, `AGT-013`, `AGT-014`, `AGT-015`) — see each ticket for detail.
 
 ## Next Planned Work
 
