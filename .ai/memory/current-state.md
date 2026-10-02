@@ -97,6 +97,22 @@ History belongs in `.ai/sessions/`, not here.
   `_get_retrieval_client()` require a real `UserSession` (no more `| None` fallback to the fixed
   service account); both Gradio tabs refuse to query until logged in. `RAG_PLATFORM_EMAIL`/
   `PASSWORD` remain only as a local-dev convenience for running the MCP server standalone.
+- **Standalone frontend with a real login page, deployed to Vercel** (2026-10-02, `AGT-016`/
+  `AGT-017`): `app/api/auth.py`'s `POST /auth/login` proxies a login against
+  `enterprise-rag-platform` and returns `{access_token, csrf_token}` as plain JSON (needed because
+  that platform's own tokens arrive as httpOnly cookies no browser JS can read). `frontend/`
+  (Vite + React + TS) has a login page and a query page, live at
+  `https://agentic-ai-psi-mauve.vercel.app`. `app/main.py` gained `CORSMiddleware`
+  (`app/core/cors.py`), and the Cloud Run deployment's `CORS_ALLOWED_ORIGINS` was set to that
+  origin. The Gradio UI is unchanged and still exists for its original Direct-vs-Agentic
+  comparison purpose.
+- **Fixed a real multi-tenant auth bug found integration-testing the above** (2026-10-02):
+  `StaticTokenAuth` (since `AGT-013`) only ever set the `access_token` cookie, never the matching
+  `csrf_token` cookie the live platform's CSRF double-submit check compares the `X-CSRF-Token`
+  header against — every forwarded per-user session (API header path, Gradio login, and the new
+  frontend) was failing every retrieval call with `403 Missing or invalid CSRF token`. Fixed in
+  `app/rag_client/auth.py`; live-verified end-to-end afterward (login -> `/query` ->
+  `web_fallback` -> grounded answer) from the actual deployed Vercel origin.
 
 ## Known Gaps / Follow-ups
 
@@ -113,7 +129,7 @@ index, read the ticket for detail.
   unclosed httpx client in the MCP server, inline-citation cross-checking).
 
 **Done** (`AGT-002`, `AGT-003`, `AGT-004`, `AGT-005`, `AGT-006`, `AGT-007`, `AGT-010`, `AGT-013`,
-`AGT-014`, `AGT-015`) — see each ticket for detail.
+`AGT-014`, `AGT-015`, `AGT-016`, `AGT-017`) — see each ticket for detail.
 
 ## Next Planned Work
 
