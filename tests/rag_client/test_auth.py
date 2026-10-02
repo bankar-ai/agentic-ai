@@ -59,12 +59,15 @@ async def test_login_failure_raises_auth_error():
 
 
 @pytest.mark.asyncio
-async def test_static_token_auth_returns_the_supplied_csrf_token_and_sets_cookie():
+async def test_static_token_auth_returns_the_supplied_csrf_token_and_sets_cookies():
     async with httpx.AsyncClient(base_url="http://rag.test") as client:
         auth = StaticTokenAuth("user-access-token", "user-csrf-token", client, "http://rag.test")
 
         assert await auth.get_csrf_token() == "user-csrf-token"
         assert client.cookies.get("access_token") == "user-access-token"
+        # The platform's CSRF check is a double-submit: X-CSRF-Token header vs. csrf_token
+        # cookie, not just a header alone -- both must be set (found live, AGT-017).
+        assert client.cookies.get("csrf_token") == "user-csrf-token"
 
 
 @pytest.mark.asyncio

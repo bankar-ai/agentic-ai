@@ -9,7 +9,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     """Runtime configuration. See `.env.example` for every recognized variable."""
 
-    model_config = SettingsConfigDict(env_file=".env", case_sensitive=False)
+    # extra="ignore": AGT-017 added a second settings class (`app.core.cors.CorsSettings`) that
+    # shares this same `.env` file for its own `CORS_*` variable -- without this, pydantic-
+    # settings' default "forbid" on every key found in the dotenv file would reject this class's
+    # otherwise-unrelated keys.
+    model_config = SettingsConfigDict(env_file=".env", case_sensitive=False, extra="ignore")
 
     rag_platform_base_url: str
     rag_platform_email: str

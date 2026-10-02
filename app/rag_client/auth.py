@@ -109,7 +109,17 @@ class StaticTokenAuth:
         # httpx cookie jars are scoped by domain; setting this directly (rather than waiting for
         # a Set-Cookie response) is what lets a supplied session work without this adapter ever
         # calling /auth/login itself.
+        #
+        # Found live 2026-10-02 (AGT-017 integration testing): the platform's CSRF check is a
+        # genuine double-submit -- it compares the `X-CSRF-Token` header against a `csrf_token`
+        # *cookie*, not just a per-session server-side value. A real browser session naturally
+        # has this cookie (the platform sets it, non-httpOnly, alongside access_token on login);
+        # a session *forwarded* across process boundaries (this class's whole reason to exist)
+        # does not, unless set here too -- every retrieval call was failing 403 "Missing or
+        # invalid CSRF token" without this line, for every caller of this class (the API's
+        # Authorization header path, the Gradio UI's login, and AGT-017's frontend).
         http_client.cookies.set("access_token", access_token, domain=httpx.URL(base_url).host)
+        http_client.cookies.set("csrf_token", csrf_token, domain=httpx.URL(base_url).host)
         self._csrf_token = csrf_token
 
     async def get_csrf_token(self) -> str:
