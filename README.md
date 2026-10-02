@@ -85,8 +85,11 @@ fallback**: a request without a valid session is rejected, not served against so
 documents. Two ways to supply one:
 
 - **API**: add `Authorization: Bearer <rag-platform-access-token>` *and* `X-RAG-CSRF-Token:
-  <csrf-token>` to `POST /query` (both required together). Get them the normal way, by calling
-  the RAG platform's own `POST /auth/login` directly. Missing or malformed, the API returns
+  <csrf-token>` to `POST /query` (both required together). Get them either by calling the RAG
+  platform's own `POST /auth/login` directly, or (AGT-016, needed by any browser-based client,
+  since that platform's tokens arrive as httpOnly cookies no browser JS can read) via this
+  project's own `POST /auth/login` — `{email, password}` in, `{access_token, csrf_token}` back,
+  ready to drop straight into the headers above. Missing or malformed, `/query` returns
   `401 Unauthorized` before the graph ever runs.
 - **Demo UI**: the "Log in" accordion above the two tabs calls the RAG platform's login for you
   and holds the resulting session for the rest of your browser session — nothing is written to

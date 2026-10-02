@@ -17,7 +17,11 @@ import httpx
 from app.agents.schemas import GraphState, UserSession
 from app.api.router import get_graph
 from app.core.config import get_settings
-from app.rag_client.auth import RagPlatformAuth, RagPlatformAuthError, StaticTokenAuth
+from app.rag_client.auth import (
+    RagPlatformAuthError,
+    StaticTokenAuth,
+    login_and_extract_session,
+)
 from app.rag_client.retrieval import RagPlatformRetrievalClient
 
 _LOGIN_REQUIRED_MESSAGE = "Please log in with your enterprise-rag-platform account above to use this demo."
@@ -33,22 +37,18 @@ def _get_retrieval_client(user_session: UserSession) -> RagPlatformRetrievalClie
 async def login(email: str, password: str) -> tuple[UserSession | None, str]:
     """Log in directly against `enterprise-rag-platform`'s own `/auth/login` -- this UI never
     stores the password past this one call, only the resulting session (held in `gr.State`,
-    per-browser-session, never written to disk). The access token is read back out of this one-off
-    client's cookie jar (where the platform's `Set-Cookie` landed it) since every later query
-    starts a fresh http client and must re-inject it itself via `StaticTokenAuth`.
+    per-browser-session, never written to disk).
     """
     if not email or not password:
         return None, "Enter both email and password."
     settings = get_settings()
     async with httpx.AsyncClient(base_url=settings.rag_platform_base_url, timeout=30.0) as http_client:
-        auth = RagPlatformAuth(settings.rag_platform_base_url, email, password, http_client)
         try:
-            csrf_token = await auth.get_csrf_token()
+            access_token, csrf_token = await login_and_extract_session(
+                settings.rag_platform_base_url, email, password, http_client
+            )
         except RagPlatformAuthError:
             return None, "Login failed -- check your email and password."
-        access_token = http_client.cookies.get("access_token")
-    if not access_token:
-        return None, "Login succeeded but no session cookie was issued -- please try again."
     return UserSession(access_token=access_token, csrf_token=csrf_token), f"Logged in as {email}. Both tabs now use your own documents."
 
 

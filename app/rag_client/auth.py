@@ -75,6 +75,25 @@ class RagPlatformAuth:
         return AuthSession(**response.json()).csrf_token
 
 
+async def login_and_extract_session(
+    base_url: str, email: str, password: str, http_client: httpx.AsyncClient
+) -> tuple[str, str]:
+    """Log in against `enterprise-rag-platform` and return `(access_token, csrf_token)`.
+
+    Shared by every caller that needs a usable session handed back as plain values rather than
+    left sitting in `http_client`'s cookie jar (AGT-016): the Gradio UI's own login flow and the
+    `POST /auth/login` proxy endpoint both call this instead of duplicating the
+    `RagPlatformAuth` + cookie-jar-read dance. Raises `RagPlatformAuthError` on bad credentials,
+    or if login otherwise succeeds without actually issuing the `access_token` cookie.
+    """
+    auth = RagPlatformAuth(base_url, email, password, http_client)
+    csrf_token = await auth.get_csrf_token()
+    access_token = http_client.cookies.get("access_token")
+    if not access_token:
+        raise RagPlatformAuthError("Login succeeded but no session cookie was issued.")
+    return access_token, csrf_token
+
+
 class StaticTokenAuth:
     """Wraps an already-established end-user session (AGT-013's multi-tenant path): the access
     token to inject into the shared http client's cookie jar, plus the matching CSRF token.
