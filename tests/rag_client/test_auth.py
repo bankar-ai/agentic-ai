@@ -39,11 +39,12 @@ async def test_refresh_rotates_csrf_token_and_sends_current_one_as_header(transp
         auth = RagPlatformAuth("http://rag.test", "svc@example.com", "secret123", client)
         await auth.get_csrf_token()
 
-        new_token = await auth.refresh()
+        new_access_token, new_csrf_token = await auth.refresh()
 
-        assert new_token == "csrf-2"
+        assert new_csrf_token == "csrf-2"
+        assert new_access_token == "access-2"
         assert await auth.get_csrf_token() == "csrf-2"
-        assert client.cookies.get("access_token") == "access-2"
+        assert await auth.get_access_token() == "access-2"
 
 
 @pytest.mark.asyncio
@@ -59,21 +60,16 @@ async def test_login_failure_raises_auth_error():
 
 
 @pytest.mark.asyncio
-async def test_static_token_auth_returns_the_supplied_csrf_token_and_sets_cookies():
-    async with httpx.AsyncClient(base_url="http://rag.test") as client:
-        auth = StaticTokenAuth("user-access-token", "user-csrf-token", client, "http://rag.test")
+async def test_static_token_auth_returns_the_supplied_access_and_csrf_tokens():
+    auth = StaticTokenAuth("user-access-token", "user-csrf-token")
 
-        assert await auth.get_csrf_token() == "user-csrf-token"
-        assert client.cookies.get("access_token") == "user-access-token"
-        # The platform's CSRF check is a double-submit: X-CSRF-Token header vs. csrf_token
-        # cookie, not just a header alone -- both must be set (found live, AGT-017).
-        assert client.cookies.get("csrf_token") == "user-csrf-token"
+    assert await auth.get_access_token() == "user-access-token"
+    assert await auth.get_csrf_token() == "user-csrf-token"
 
 
 @pytest.mark.asyncio
 async def test_static_token_auth_refresh_raises_instead_of_recovering():
-    async with httpx.AsyncClient(base_url="http://rag.test") as client:
-        auth = StaticTokenAuth("user-access-token", "user-csrf-token", client, "http://rag.test")
+    auth = StaticTokenAuth("user-access-token", "user-csrf-token")
 
-        with pytest.raises(RagPlatformAuthError):
-            await auth.refresh()
+    with pytest.raises(RagPlatformAuthError):
+        await auth.refresh()

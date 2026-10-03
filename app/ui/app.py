@@ -23,14 +23,16 @@ from app.rag_client.auth import (
     login_and_extract_session,
 )
 from app.rag_client.retrieval import RagPlatformRetrievalClient
+from app.rag_client.shared_client import get_shared_rag_platform_client
 
 _LOGIN_REQUIRED_MESSAGE = "Please log in with your enterprise-rag-platform account above to use this demo."
 
 
 def _get_retrieval_client(user_session: UserSession) -> RagPlatformRetrievalClient:
     settings = get_settings()
-    http_client = httpx.AsyncClient(base_url=settings.rag_platform_base_url, timeout=30.0)
-    auth = StaticTokenAuth(user_session.access_token, user_session.csrf_token, http_client, settings.rag_platform_base_url)
+    # AGT-009: one client reused across every query in this process, not a fresh one per call.
+    http_client = get_shared_rag_platform_client()
+    auth = StaticTokenAuth(user_session.access_token, user_session.csrf_token)
     return RagPlatformRetrievalClient(settings.rag_platform_base_url, auth, http_client)
 
 

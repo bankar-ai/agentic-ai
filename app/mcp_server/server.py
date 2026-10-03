@@ -3,6 +3,7 @@ tool. Run standalone via `python -m app.mcp_server.server` (stdio transport); th
 (Task 9) connects to this as an MCP client subprocess.
 """
 
+import asyncio
 from functools import lru_cache
 
 import httpx
@@ -40,9 +41,7 @@ def _build_auth(settings: Settings, http_client: httpx.AsyncClient) -> RagPlatfo
     one is logged in, and as the configured service account otherwise.
     """
     if settings.rag_platform_access_token and settings.rag_platform_csrf_token:
-        return StaticTokenAuth(
-            settings.rag_platform_access_token, settings.rag_platform_csrf_token, http_client, settings.rag_platform_base_url
-        )
+        return StaticTokenAuth(settings.rag_platform_access_token, settings.rag_platform_csrf_token)
     return RagPlatformAuth(
         settings.rag_platform_base_url, settings.rag_platform_email, settings.rag_platform_password, http_client
     )
@@ -57,8 +56,18 @@ def _build_retrieval_client() -> RagPlatformRetrievalClient:
 
 @lru_cache
 def _get_retrieval_client() -> RagPlatformRetrievalClient:
-    """Lazily construct and cache the retrieval client on first access."""
+    """Lazily construct and cache the retrieval client for this subprocess's one lifetime."""
     return _build_retrieval_client()
+
+
+async def _close_retrieval_client() -> None:
+    """AGT-009/AGT-012: close the cached client's underlying httpx connection on process exit --
+    this subprocess is short-lived (spawned fresh per Research call), but was never explicitly
+    cleaning up its one connection.
+    """
+    if _get_retrieval_client.cache_info().currsize:
+        await _get_retrieval_client().aclose()
+    _get_retrieval_client.cache_clear()
 
 
 @mcp_server.tool()
@@ -73,5 +82,12 @@ async def search_knowledge_base(
     return await _search_knowledge_base_impl(_get_retrieval_client(), query, top_k, rerank, expand_sections)
 
 
+async def _run() -> None:
+    try:
+        await mcp_server.run_stdio_async()
+    finally:
+        await _close_retrieval_client()
+
+
 if __name__ == "__main__":
-    mcp_server.run(transport="stdio")
+    asyncio.run(_run())

@@ -4,7 +4,12 @@ import httpx
 import pytest
 
 from app.core.config import Settings
-from app.mcp_server.server import _build_auth, _search_knowledge_base_impl
+from app.mcp_server.server import (
+    _build_auth,
+    _close_retrieval_client,
+    _get_retrieval_client,
+    _search_knowledge_base_impl,
+)
 from app.rag_client.auth import RagPlatformAuth, StaticTokenAuth
 from app.rag_client.schemas import RetrievalResult, RetrievedChunk
 
@@ -84,3 +89,26 @@ def test_build_auth_falls_back_to_service_account_when_no_access_token():
     auth = _build_auth(settings, MagicMock(spec=httpx.AsyncClient))
 
     assert isinstance(auth, RagPlatformAuth)
+
+
+@pytest.mark.asyncio
+async def test_close_retrieval_client_closes_and_clears_cache_when_one_was_built(monkeypatch):
+    """AGT-009/AGT-012: the cached client's one connection must actually be closed on process
+    exit, and closing when nothing was ever built must not error."""
+    _get_retrieval_client.cache_clear()
+    monkeypatch.setenv("RAG_PLATFORM_BASE_URL", "http://rag.test")
+    monkeypatch.setenv("RAG_PLATFORM_EMAIL", "svc@example.com")
+    monkeypatch.setenv("RAG_PLATFORM_PASSWORD", "secret123")
+    from app.core.config import get_settings
+
+    get_settings.cache_clear()
+
+    await _close_retrieval_client()  # nothing built yet -- must be a no-op, not an error
+
+    client = _get_retrieval_client()
+    assert client._http.is_closed is False
+
+    await _close_retrieval_client()
+
+    assert client._http.is_closed is True
+    assert _get_retrieval_client.cache_info().currsize == 0

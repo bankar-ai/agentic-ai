@@ -11,6 +11,16 @@ without asking a model. Matching deliberately ignores the cited `text`, which a 
 legitimately abbreviate; the content check is the LLM step below, which is given the real
 retrieved text, not the Writer's copy of it. A draft that cites nothing (e.g. the Writer's own refusal
 text) is never considered grounded, since there is nothing to check it against.
+
+AGT-012 (decision, not a gap): this code-level check only covers the structured `cited_evidence`
+field, not inline markers the Writer might also write directly into `draft.text` prose (e.g.
+"[some-file.pdf]"). Deliberately not cross-checked deterministically: free-text citation markers
+have no fixed format to parse reliably (bracketed, parenthetical, a bare filename, ...), so a
+regex-based check would itself be a source of false negatives/positives for marginal benefit over
+what already exists -- the LLM content check above re-reads the full draft text against the real
+retrieved evidence, which catches a prose citation pointing at unsupported content as an
+unsupported claim, just not by name-matching the marker itself. Revisit only if this is observed
+to actually let a fabricated inline citation through in practice.
 """
 
 from pydantic_ai import Agent

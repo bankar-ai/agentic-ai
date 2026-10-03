@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 
+from app.agents.research import KnowledgeBaseUnavailable
 from app.agents.schemas import UserSession
 from app.api.router import MCP_SERVER_COMMAND, extract_user_session
 from app.main import app
@@ -42,6 +43,21 @@ def test_query_endpoint_surfaces_rag_platform_outage_as_error_event():
     assert "event: error" in response.text
     assert "RagPlatformRetrievalError" in response.text
     assert "event: result" not in response.text
+
+
+def test_query_endpoint_maps_knowledge_base_unavailable_to_a_legible_error_event():
+    """AGT-012: a raw MCP ToolError/MCPError must not leak its exception type name to the
+    client -- it's mapped to KnowledgeBaseUnavailable with a legible message instead."""
+    fake_graph = AsyncMock()
+    fake_graph.ainvoke.side_effect = KnowledgeBaseUnavailable("The knowledge base tool call failed: boom")
+
+    with patch("app.api.router.get_graph", return_value=fake_graph):
+        client = TestClient(app)
+        response = client.post("/query", json={"query": "What is the capital of France?"}, headers=_AUTH_HEADERS)
+
+    assert "event: error" in response.text
+    assert '"type": "KnowledgeBaseUnavailable"' in response.text
+    assert "boom" not in response.text
 
 
 def test_query_endpoint_surfaces_unexpected_failure_as_error_event():

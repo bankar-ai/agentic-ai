@@ -26,6 +26,8 @@ only as environment variables must be forwarded explicitly, or the child's `Sett
 import os
 from pathlib import Path
 
+from fastmcp.exceptions import ToolError
+from mcp.shared.exceptions import MCPError
 from pydantic_ai.mcp import MCPToolset, StdioTransport
 
 from app.agents.schemas import Evidence, GatekeeperDecision, ResearchResult, UserSession
@@ -40,6 +42,14 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 class KnowledgeBaseToolError(RuntimeError):
     """The MCP knowledge-base tool returned something other than a list of result chunks."""
+
+
+class KnowledgeBaseUnavailable(RuntimeError):
+    """AGT-012: the MCP subprocess itself failed or refused the call (e.g. the RAG platform was
+    unreachable *from inside the subprocess*) -- raised in place of the raw `ToolError`/`MCPError`
+    so callers (the API's error-event mapping) can show a legible message instead of a bare
+    exception type name.
+    """
 
 
 def _mcp_subprocess_env(user_session: UserSession | None = None) -> dict[str, str]:
@@ -71,9 +81,12 @@ async def _research_kb(
     # tool_error_behavior="error": outside an Agent run there is no model to retry, so a
     # server-side failure (e.g. the RAG platform being down) must raise, not become a ModelRetry.
     mcp_toolset = MCPToolset(transport, tool_error_behavior="error")
-    raw = await mcp_toolset.direct_call_tool(
-        _KB_TOOL_NAME, {"query": query, "top_k": decision.top_k, "rerank": decision.rerank}
-    )
+    try:
+        raw = await mcp_toolset.direct_call_tool(
+            _KB_TOOL_NAME, {"query": query, "top_k": decision.top_k, "rerank": decision.rerank}
+        )
+    except (ToolError, MCPError) as exc:
+        raise KnowledgeBaseUnavailable(f"The knowledge base tool call failed: {exc}") from exc
     if not isinstance(raw, list):
         raise KnowledgeBaseToolError(f"{_KB_TOOL_NAME} returned {type(raw).__name__}, expected a list of chunks")
     return [Evidence(text=chunk["text"], source="knowledge_base", citation=chunk["source_filename"]) for chunk in raw]

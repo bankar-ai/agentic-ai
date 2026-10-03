@@ -2,8 +2,14 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastmcp.exceptions import ToolError
 
-from app.agents.research import KnowledgeBaseToolError, _research_kb, research
+from app.agents.research import (
+    KnowledgeBaseToolError,
+    KnowledgeBaseUnavailable,
+    _research_kb,
+    research,
+)
 from app.agents.schemas import Evidence, GatekeeperDecision, ResearchResult, UserSession
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -158,4 +164,20 @@ async def test_research_kb_route_rejects_malformed_tool_result():
     _, _, transport_patch, toolset_patch = _patched_mcp("not a list")
 
     with transport_patch, toolset_patch, pytest.raises(KnowledgeBaseToolError):
+        await _research_kb(mcp_server_command=MCP_COMMAND, decision=decision, query="q")
+
+
+@pytest.mark.asyncio
+async def test_research_kb_route_maps_tool_error_to_knowledge_base_unavailable():
+    """AGT-012: a raw fastmcp ToolError (e.g. the RAG platform unreachable from inside the MCP
+    subprocess) must surface as this project's own KnowledgeBaseUnavailable, not leak the raw
+    MCP-library exception type up to the API layer."""
+    decision = GatekeeperDecision(route="kb", reasoning="ok")
+    fake_transport = MagicMock(name="fake_transport")
+    fake_toolset = MagicMock(name="fake_toolset")
+    fake_toolset.direct_call_tool = AsyncMock(side_effect=ToolError("RAG platform unreachable"))
+    transport_patch = patch("app.agents.research.StdioTransport", return_value=fake_transport)
+    toolset_patch = patch("app.agents.research.MCPToolset", return_value=fake_toolset)
+
+    with transport_patch, toolset_patch, pytest.raises(KnowledgeBaseUnavailable):
         await _research_kb(mcp_server_command=MCP_COMMAND, decision=decision, query="q")

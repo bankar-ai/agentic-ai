@@ -13,6 +13,7 @@ from fastapi import APIRouter, Header, HTTPException
 from fastapi.responses import StreamingResponse
 from langgraph.graph.state import CompiledStateGraph
 
+from app.agents.research import KnowledgeBaseUnavailable
 from app.agents.schemas import GraphState, UserSession
 from app.api.schemas import QueryRequest
 from app.core.config import get_settings
@@ -56,15 +57,17 @@ def get_graph(user_session: UserSession):
     A thin, separately-mockable seam: tests patch this function rather than the graph internals.
     """
     settings = get_settings()
-    import httpx
 
     from app.agents.llm import get_model
     from app.rag_client.auth import StaticTokenAuth
     from app.rag_client.retrieval import RagPlatformRetrievalClient
+    from app.rag_client.shared_client import get_shared_rag_platform_client
 
     model = get_model(settings)
-    http_client = httpx.AsyncClient(base_url=settings.rag_platform_base_url, timeout=30.0)
-    auth = StaticTokenAuth(user_session.access_token, user_session.csrf_token, http_client, settings.rag_platform_base_url)
+    # AGT-009: one client reused across every request, not a fresh one per call -- safe only
+    # because StaticTokenAuth no longer stores per-user state on it (see app/rag_client/auth.py).
+    http_client = get_shared_rag_platform_client()
+    auth = StaticTokenAuth(user_session.access_token, user_session.csrf_token)
     retrieval_client = RagPlatformRetrievalClient(settings.rag_platform_base_url, auth, http_client)
     tracer = get_tracer(settings)
     return build_graph(model, retrieval_client, MCP_SERVER_COMMAND, settings.max_verification_retries, tracer)
@@ -93,6 +96,15 @@ async def _event_stream(
         yield _format_sse("error", {
             "type": type(exc).__name__,
             "message": "The knowledge base (enterprise-rag-platform) is unavailable or rejected authentication.",
+        })
+        return
+    except KnowledgeBaseUnavailable:
+        # AGT-012: the MCP subprocess's own ToolError/MCPError, mapped to a legible type/message
+        # instead of leaking "ToolError" (or similar) straight to the client.
+        logger.exception("Knowledge-base MCP tool call failed while answering query")
+        yield _format_sse("error", {
+            "type": "KnowledgeBaseUnavailable",
+            "message": "The knowledge base is temporarily unavailable. Please try again shortly.",
         })
         return
     except Exception as exc:

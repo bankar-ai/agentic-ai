@@ -27,7 +27,7 @@ async def test_search_returns_chunks():
             return _login_response()
         if request.url.path == "/retrieval/query":
             assert request.headers["x-csrf-token"] == "csrf-1"
-            assert request.headers["cookie"] == "access_token=access-1"
+            assert request.headers["cookie"] == "access_token=access-1; csrf_token=csrf-1"
             return httpx.Response(200, json={"results": [CHUNK]})
         return httpx.Response(404)
 

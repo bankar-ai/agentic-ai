@@ -5,8 +5,10 @@ separate keyword/semantic/chunk-level strategies to choose between, so this clie
 exactly the parameters the real endpoint accepts: `top_k`, `rerank`, `expand_sections`,
 `document_ids`.
 
-ERP-116: auth now travels via an httpOnly cookie the shared http client replays automatically,
-plus an `X-CSRF-Token` header this client sets explicitly -- not an `Authorization` header. See
+ERP-116: auth travels as a `Cookie: access_token=...` header plus an `X-CSRF-Token` header, both
+built explicitly per request from whatever `auth` hands back (AGT-009: never via `self._http`'s
+own cookie jar -- that client may be shared across concurrent requests for *different* users, and
+a shared mutable jar would leak one user's session into another's in-flight request). See
 `app/rag_client/auth.py`'s module docstring for the full contract.
 """
 
@@ -46,9 +48,11 @@ class RagPlatformRetrievalClient:
             "expand_sections": expand_sections, "document_ids": document_ids,
         }
         try:
-            response = await self._request(payload, await self._auth.get_csrf_token())
+            access_token, csrf_token = await self._auth.get_access_token(), await self._auth.get_csrf_token()
+            response = await self._request(payload, access_token, csrf_token)
             if response.status_code in (401, 403):
-                response = await self._request(payload, await self._auth.refresh())
+                access_token, csrf_token = await self._auth.refresh()
+                response = await self._request(payload, access_token, csrf_token)
         except httpx.HTTPError as exc:
             raise RagPlatformRetrievalError(f"Retrieval request failed: {exc}") from exc
 
@@ -58,5 +62,20 @@ class RagPlatformRetrievalClient:
             )
         return RetrievalResult(**response.json())
 
-    async def _request(self, payload: dict, csrf_token: str) -> httpx.Response:
-        return await self._http.post("/retrieval/query", json=payload, headers={"X-CSRF-Token": csrf_token})
+    async def aclose(self) -> None:
+        """Close the underlying http client. Callers that built their own client (rather than
+        using the process-wide shared one, AGT-009) are responsible for calling this.
+        """
+        await self._http.aclose()
+
+    async def _request(self, payload: dict, access_token: str, csrf_token: str) -> httpx.Response:
+        # The platform's CSRF check is a double-submit: the `X-CSRF-Token` header must match a
+        # `csrf_token` *cookie*, not just a per-session server-side value (found live
+        # 2026-10-02) -- so csrf_token travels as both a cookie and a header here, not just one.
+        return await self._http.post(
+            "/retrieval/query", json=payload,
+            headers={
+                "X-CSRF-Token": csrf_token,
+                "Cookie": f"access_token={access_token}; csrf_token={csrf_token}",
+            },
+        )
