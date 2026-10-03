@@ -1,8 +1,8 @@
 """Two-tab Gradio demo: Direct RAG (single retrieval pass, no correction) side by side with
-Agentic RAG (the full Gatekeeper->Research->Writer->Verifier trace, shown once the graph has
-finished -- not streamed step by step), so the value of the correction loop is shown, not just
-explained. The Agentic tab runs the graph in-process via `get_graph()` rather than calling the
-SSE endpoint. Not a production UI.
+Agentic RAG (the full Gatekeeper->Research->Writer->Verifier trace, filled in live as each agent
+finishes, AGT-008), so the value of the correction loop is shown, not just explained. The Agentic
+tab runs the graph in-process via `get_graph()` rather than calling the SSE endpoint. Not a
+production UI.
 
 AGT-014/AGT-006: a login row lets a visitor authenticate directly against
 `enterprise-rag-platform` (this UI never sees or stores a password beyond that one call) and see
@@ -71,21 +71,30 @@ async def run_direct_query(query: str, user_session: UserSession | None = None) 
     return f"{top.text}\n\n(source: {top.source_filename})"
 
 
-async def run_agentic_query(query: str, user_session: UserSession | None = None) -> tuple[str, str]:
-    """Agentic-RAG tab: run the full graph, render the trace and the final (possibly refused) answer."""
+async def run_agentic_query(query: str, user_session: UserSession | None = None):
+    """Agentic-RAG tab: run the full graph, yielding the trace and answer progressively as each
+    agent actually finishes (AGT-008) -- an async generator, which Gradio streams to the output
+    components on every `yield` rather than waiting for one final return value.
+    """
     if user_session is None:
-        return "", _LOGIN_REQUIRED_MESSAGE
+        yield "", _LOGIN_REQUIRED_MESSAGE
+        return
     graph = get_graph(user_session)
     initial_state: GraphState = {
         "query": query, "user_session": user_session, "gatekeeper_decision": None, "evidence": [],
         "draft": None, "verification": None, "retry_count": 0, "final_answer": None, "refused": False,
         "trace": [],
     }
-    final_state = await graph.ainvoke(initial_state)
-    trace_lines = [f"{step.get('agent', '?')}: {step}" for step in final_state["trace"]]
-    trace_text = "\n".join(trace_lines)
+    final_state = initial_state
+    trace_lines: list[str] = []
+    async for chunk in graph.astream(initial_state, stream_mode="updates"):
+        for node_state in chunk.values():
+            final_state = node_state
+            step = node_state["trace"][-1]
+            trace_lines.append(f"{step.get('agent', '?')}: {step}")
+            yield "\n".join(trace_lines), "(thinking...)"
     answer_text = final_state["final_answer"] or "The system could not produce a grounded answer and refused to guess."
-    return trace_text, answer_text
+    yield "\n".join(trace_lines), answer_text
 
 
 def build_ui() -> gr.Blocks:

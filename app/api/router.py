@@ -1,7 +1,6 @@
-"""Query API: runs the agent graph, then returns its step-by-step trace and final result as SSE.
-
-Not incremental: the graph runs to completion first, and every trace step is then sent at once.
-True per-step streaming (via `graph.astream`) is a planned follow-up.
+"""Query API: runs the agent graph and streams its trace as SSE, one `step` event per agent as
+it actually finishes (AGT-008: via `graph.astream(..., stream_mode="updates")`), followed by one
+`result` event once the graph reaches an end state.
 """
 
 import json
@@ -87,9 +86,14 @@ async def _event_stream(
     }
     # The 200 status and headers are already sent once this generator starts, so a failure here
     # can't become an HTTP error status -- it must surface as an explicit `error` event instead of
-    # the stream ending silently with an empty body.
+    # the stream ending silently with an empty body. Any `step` events already yielded before the
+    # failure stay sent -- that's the point of streaming: partial progress is still progress.
+    final_state = initial_state
     try:
-        final_state = await graph.ainvoke(initial_state)
+        async for chunk in graph.astream(initial_state, stream_mode="updates"):
+            for node_state in chunk.values():
+                final_state = node_state
+                yield _format_sse("step", node_state["trace"][-1])
     except (RagPlatformRetrievalError, RagPlatformAuthError) as exc:
         # Upstream response bodies stay in the server log, not in the client-facing message.
         logger.exception("RAG platform unavailable while answering query")
@@ -112,8 +116,6 @@ async def _event_stream(
         logger.exception("Agent graph failed while answering query")
         yield _format_sse("error", {"type": type(exc).__name__, "message": "Query failed; see server logs for details."})
         return
-    for step in final_state["trace"]:
-        yield _format_sse("step", step)
     yield _format_sse("result", {"final_answer": final_state["final_answer"], "refused": final_state["refused"]})
 
 
@@ -123,11 +125,12 @@ async def query(
     authorization: str | None = Header(default=None),
     x_rag_csrf_token: str | None = Header(default=None),
 ) -> StreamingResponse:
-    """Run a query through the agent graph and stream back its full trace and result as SSE.
+    """Run a query through the agent graph and stream back its trace and result as SSE.
 
-    The trace is sent after the graph completes, not incrementally per step. The graph is built
-    before the stream opens, so configuration errors (missing settings, etc.) propagate as a normal
-    5xx response rather than a 200 with an empty body.
+    Each `step` event is sent as that agent actually finishes (AGT-008), not batched until the
+    graph completes. The graph is built before the stream opens, so configuration errors
+    (missing settings, etc.) propagate as a normal 5xx response rather than a 200 with an empty
+    body.
 
     AGT-013/AGT-006: requires `Authorization: Bearer <rag-platform-access-token>` +
     `X-RAG-CSRF-Token` headers together, identifying a real `enterprise-rag-platform` account.

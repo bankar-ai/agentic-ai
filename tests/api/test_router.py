@@ -1,5 +1,5 @@
 import sys
-from unittest.mock import AsyncMock, patch
+from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
 
@@ -12,28 +12,53 @@ from app.rag_client.retrieval import RagPlatformRetrievalError
 _AUTH_HEADERS = {"Authorization": "Bearer user-token-123", "X-RAG-CSRF-Token": "user-csrf-456"}
 
 
+async def _astream(chunks: list[dict]):
+    """Build an async generator standing in for `graph.astream(..., stream_mode='updates')`:
+    each `chunks` entry is a `{node_name: full_state_dict}` pair, same shape LangGraph's
+    "updates" mode actually yields (AGT-008)."""
+    for chunk in chunks:
+        yield chunk
+
+
+async def _astream_then_raise(chunks: list[dict], exc: Exception):
+    for chunk in chunks:
+        yield chunk
+    raise exc
+
+
+def _graph(chunks: list[dict] | None = None, raises: Exception | None = None) -> MagicMock:
+    fake_graph = MagicMock()
+    if raises is not None:
+        fake_graph.astream = MagicMock(return_value=_astream_then_raise(chunks or [], raises))
+    else:
+        fake_graph.astream = MagicMock(return_value=_astream(chunks or []))
+    return fake_graph
+
+
 def test_query_endpoint_streams_steps_and_result():
-    fake_final_state = {
-        "final_answer": "Paris [geo.pdf]", "refused": False,
+    gatekeeper_state = {
+        "final_answer": None, "refused": False,
         "trace": [{"agent": "gatekeeper", "route": "kb", "reasoning": "ok"}],
     }
-    fake_graph = AsyncMock()
-    fake_graph.ainvoke.return_value = fake_final_state
+    verifier_state = {
+        "final_answer": "Paris [geo.pdf]", "refused": False,
+        "trace": [gatekeeper_state["trace"][0], {"agent": "verifier", "grounded": True}],
+    }
+    fake_graph = _graph([{"gatekeeper": gatekeeper_state}, {"verifier": verifier_state}])
 
     with patch("app.api.router.get_graph", return_value=fake_graph):
         client = TestClient(app)
         response = client.post("/query", json={"query": "What is the capital of France?"}, headers=_AUTH_HEADERS)
 
     assert response.status_code == 200
-    assert "event: step" in response.text
+    assert response.text.count("event: step") == 2
     assert "event: result" in response.text
     assert "Paris" in response.text
 
 
 def test_query_endpoint_surfaces_rag_platform_outage_as_error_event():
     """An outage during the run must not be a silent 200 with an empty body."""
-    fake_graph = AsyncMock()
-    fake_graph.ainvoke.side_effect = RagPlatformRetrievalError("Retrieval request failed: connection refused")
+    fake_graph = _graph(raises=RagPlatformRetrievalError("Retrieval request failed: connection refused"))
 
     with patch("app.api.router.get_graph", return_value=fake_graph):
         client = TestClient(app)
@@ -45,11 +70,30 @@ def test_query_endpoint_surfaces_rag_platform_outage_as_error_event():
     assert "event: result" not in response.text
 
 
+def test_query_endpoint_sends_steps_already_yielded_before_a_later_failure():
+    """AGT-008: partial progress sent before a mid-stream failure must stay sent, not be
+    discarded just because the overall run didn't finish."""
+    gatekeeper_state = {
+        "final_answer": None, "refused": False,
+        "trace": [{"agent": "gatekeeper", "route": "kb", "reasoning": "ok"}],
+    }
+    fake_graph = _graph(
+        chunks=[{"gatekeeper": gatekeeper_state}],
+        raises=RagPlatformRetrievalError("Retrieval request failed: timed out"),
+    )
+
+    with patch("app.api.router.get_graph", return_value=fake_graph):
+        client = TestClient(app)
+        response = client.post("/query", json={"query": "What is the capital of France?"}, headers=_AUTH_HEADERS)
+
+    assert "event: step" in response.text
+    assert "event: error" in response.text
+
+
 def test_query_endpoint_maps_knowledge_base_unavailable_to_a_legible_error_event():
     """AGT-012: a raw MCP ToolError/MCPError must not leak its exception type name to the
     client -- it's mapped to KnowledgeBaseUnavailable with a legible message instead."""
-    fake_graph = AsyncMock()
-    fake_graph.ainvoke.side_effect = KnowledgeBaseUnavailable("The knowledge base tool call failed: boom")
+    fake_graph = _graph(raises=KnowledgeBaseUnavailable("The knowledge base tool call failed: boom"))
 
     with patch("app.api.router.get_graph", return_value=fake_graph):
         client = TestClient(app)
@@ -61,8 +105,7 @@ def test_query_endpoint_maps_knowledge_base_unavailable_to_a_legible_error_event
 
 
 def test_query_endpoint_surfaces_unexpected_failure_as_error_event():
-    fake_graph = AsyncMock()
-    fake_graph.ainvoke.side_effect = ValueError("internal detail")
+    fake_graph = _graph(raises=ValueError("internal detail"))
 
     with patch("app.api.router.get_graph", return_value=fake_graph):
         client = TestClient(app)
@@ -116,9 +159,7 @@ def test_extract_user_session_returns_none_when_either_header_absent_or_malforme
 
 def test_query_endpoint_passes_user_session_to_get_graph_when_logged_in():
     """AGT-013: both auth headers must actually reach get_graph(), not be silently dropped."""
-    fake_final_state = {"final_answer": "answer", "refused": False, "trace": []}
-    fake_graph = AsyncMock()
-    fake_graph.ainvoke.return_value = fake_final_state
+    fake_graph = _graph([{"gatekeeper": {"final_answer": "answer", "refused": False, "trace": []}}])
 
     with patch("app.api.router.get_graph", return_value=fake_graph) as mock_get_graph:
         client = TestClient(app)
