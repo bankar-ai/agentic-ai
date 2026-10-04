@@ -11,7 +11,6 @@ from collections.abc import AsyncIterator
 from fastapi import APIRouter, Header, HTTPException
 from fastapi.responses import StreamingResponse
 from langgraph.graph.state import CompiledStateGraph
-from starlette.background import BackgroundTask
 
 from app.agents.research import KnowledgeBaseUnavailable
 from app.agents.schemas import GraphState, UserSession
@@ -193,15 +192,14 @@ async def query(
             detail="Log in with your enterprise-rag-platform account (Authorization + X-RAG-CSRF-Token headers) to use this service.",
         )
     settings = get_settings()
-    graph = get_graph(user_session)
-    # AGT-031: a real Starlette BackgroundTask, not a bare `asyncio.create_task` -- the latter has
-    # no guaranteed owner once this function returns and can be cancelled before it runs; this one
-    # is tied to the response and Starlette runs it to completion after the stream finishes.
-    # Throttled internally and wrapped in try/except on its own, so a slow or failed budget check
-    # can't add latency to, or fail, the query itself.
-    background = None
+    # AGT-031: awaited inline, not backgrounded -- Cloud Run only guarantees CPU while a request is
+    # actively being handled (the default `cpu-throttling` setting this service runs under); a
+    # `StreamingResponse(background=...)` task races the sandbox freezing CPU right after the last
+    # SSE chunk is sent and reliably lost that race in practice (confirmed live: zero
+    # `openrouter.ai/api/v1/credits` calls ever logged despite no exception either). Already
+    # throttled to once per 10 minutes internally, so the added latency on the rare request that
+    # actually triggers it is one lightweight GET, not an LLM call.
     if settings.llm_provider == "openrouter" and settings.openrouter_api_key:
-        background = BackgroundTask(maybe_record_openrouter_budget, settings.openrouter_api_key)
-    return StreamingResponse(
-        _event_stream(graph, request.query, user_session), media_type="text/event-stream", background=background
-    )
+        await maybe_record_openrouter_budget(settings.openrouter_api_key)
+    graph = get_graph(user_session)
+    return StreamingResponse(_event_stream(graph, request.query, user_session), media_type="text/event-stream")
