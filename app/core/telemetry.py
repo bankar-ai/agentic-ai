@@ -1,22 +1,30 @@
-"""OpenTelemetry trace setup (AGT-018): exports to the same Grafana Cloud stack
-`enterprise-rag-platform` already uses, under this project's own `OTEL_SERVICE_NAME`.
+"""OpenTelemetry trace + metric setup (AGT-018/AGT-020): exports to the same Grafana Cloud stack
+`enterprise-rag-platform` already uses, under this project's own `OTEL_SERVICE_NAME`. Log export
+is `app.core.logging_config` (AGT-020), called separately since it hooks the logging module, not
+this one's tracer/meter providers.
 
 Called once from `app.main` at startup. Never load-bearing: any failure during setup is logged
 and swallowed rather than preventing the app from starting or serving requests, mirroring
 `enterprise-rag-platform/app/core/telemetry.py`'s own stance.
 
-Metrics/logs export (that sibling project's ERP-042/ERP-039) are explicitly out of scope here --
-see AGT-018's notes for why traces alone is this ticket's floor.
+No local Prometheus reader (unlike that sibling project's dual pull+push export) -- this project
+has no `/metrics` endpoint and no local-dev collector to pull from; push-based OTLP only.
 """
 
 import logging
 import os
 
 from fastapi import FastAPI
-from opentelemetry import trace
+from opentelemetry import metrics, trace
 from opentelemetry.context import Context
+from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import (
+    OTLPMetricExporter as GrpcOTLPMetricExporter,
+)
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
     OTLPSpanExporter as GrpcOTLPSpanExporter,
+)
+from opentelemetry.exporter.otlp.proto.http.metric_exporter import (
+    OTLPMetricExporter as HttpOTLPMetricExporter,
 )
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
     OTLPSpanExporter as HttpOTLPSpanExporter,
@@ -31,6 +39,11 @@ from opentelemetry.propagators.textmap import (
     TextMapPropagator,
     default_getter,
     default_setter,
+)
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.export import (
+    MetricExporter,
+    PeriodicExportingMetricReader,
 )
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExporter
@@ -77,8 +90,20 @@ def _build_span_exporter() -> SpanExporter:
     return GrpcOTLPSpanExporter()
 
 
+def _build_metric_exporter() -> MetricExporter:
+    """Pick the OTLP metric exporter matching `OTEL_EXPORTER_OTLP_PROTOCOL`.
+
+    Mirrors `_build_span_exporter`'s protocol selection and explicit timeout (AGT-018's
+    "read timeout=0" fix applies identically here).
+    """
+    protocol = os.environ.get("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc")
+    if protocol == "http/protobuf":
+        return HttpOTLPMetricExporter(timeout=10)
+    return GrpcOTLPMetricExporter()
+
+
 def configure_telemetry(app: FastAPI) -> None:
-    """Configure the global OTel tracer provider and auto-instrument FastAPI/httpx.
+    """Configure the global OTel tracer/meter providers and auto-instrument FastAPI/httpx.
 
     A no-op in effect (sets up a provider that exports nowhere useful) when
     `OTEL_EXPORTER_OTLP_ENDPOINT` is unset -- local dev without a collector configured just
@@ -96,8 +121,21 @@ def configure_telemetry(app: FastAPI) -> None:
         set_global_textmap(_NoExtractPropagator())
 
         tracer_provider = TracerProvider()
-        tracer_provider.add_span_processor(BatchSpanProcessor(_build_span_exporter()))
+        # export_timeout_millis explicit too: logs/metrics (small payloads) export reliably on
+        # Cloud Run, but trace batches (larger -- FastAPIInstrumentor emits several
+        # attribute-heavy spans per request) hit "read timeout=0" far more often, suggesting a
+        # payload-size-sensitive quirk in that sandbox's networking. Not fully eliminated by
+        # this -- documented as known live flakiness in AGT-020's notes, not silently assumed
+        # fixed.
+        tracer_provider.add_span_processor(
+            BatchSpanProcessor(_build_span_exporter(), max_export_batch_size=1, export_timeout_millis=30000)
+        )
         trace.set_tracer_provider(tracer_provider)
+
+        meter_provider = MeterProvider(
+            metric_readers=[PeriodicExportingMetricReader(_build_metric_exporter())]
+        )
+        metrics.set_meter_provider(meter_provider)
 
         FastAPIInstrumentor.instrument_app(app)
         HTTPXClientInstrumentor().instrument()
