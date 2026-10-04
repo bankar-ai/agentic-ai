@@ -38,11 +38,22 @@ class DraftAnswer(BaseModel):
 
 
 class VerificationResult(BaseModel):
-    """The Verifier's groundedness check of a draft answer against the retrieved evidence."""
+    """The Verifier's groundedness check of a draft answer against the retrieved evidence.
 
+    AGT-043: `reasoning` is declared first deliberately. A structured-output/tool-call model
+    fills fields in schema order, so with `grounded`/`unsupported_claims` first (the original
+    order) the model could commit to its verdict before writing the reasoning that was supposed
+    to justify it -- caught live: a real rejection's `reasoning` field explicitly confirmed a
+    claim was grounded ("The document explicitly states 'No fall protection program'"), while the
+    same claim still appeared in `unsupported_claims`, generated moments earlier in the same call
+    with nothing yet to keep it consistent with. Putting `reasoning` first makes it the model's
+    chain-of-thought for the verdict fields that follow, not an afterthought generated once the
+    verdict is already locked in.
+    """
+
+    reasoning: str
     grounded: bool
     unsupported_claims: list[str]
-    reasoning: str
 
 
 class UserSession(BaseModel):
