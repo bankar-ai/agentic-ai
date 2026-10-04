@@ -119,23 +119,23 @@ History belongs in `.ai/sessions/`, not here.
 Tracked as tickets in `.ai/tickets/` rather than duplicated here in full — this section is a quick
 index, read the ticket for detail.
 
-**No open tickets remain** — every `AGT-*` ticket (`001`-`017`) is Done. See each ticket for
-detail; `AGT-008`/`AGT-009`/`AGT-012` (2026-10-03/04) landed together with a real concurrency bug
-found and fixed along the way (`StaticTokenAuth` was unsafe to share across concurrent
-different-user requests); `AGT-011` (2026-10-04) added `scripts/run_eval.py`, a 4-case regression
-check against the real LLM, scoring to Langfuse when configured.
+Every `AGT-*` ticket except `AGT-019` (`001`-`018`) is Done. See each ticket for detail;
+`AGT-008`/`AGT-009`/`AGT-012` (2026-10-03/04) landed together with a real concurrency bug found
+and fixed along the way (`StaticTokenAuth` was unsafe to share across concurrent different-user
+requests); `AGT-011` (2026-10-04) added `scripts/run_eval.py`, a 4-case regression check against
+the real LLM, scoring to Langfuse when configured; `AGT-018` (2026-10-04) wired Grafana Cloud
+trace export in, reusing `enterprise-rag-platform`'s existing stack/token.
 
-**Not yet ticketed, flagged for the project owner (2026-10-03):**
-- Grafana Cloud observability — `enterprise-rag-platform` already has a reusable stack/dashboard
-  ("AI Platforms — Service Observability") built to accept a second project via a `service_name`
-  picker; `agentic-ai` isn't wired into it yet.
-- CI/CD for Cloud Run — every deploy so far has been a manual `gcloud run deploy`; no pipeline
-  deploys on merge to `main`.
+**One ticket genuinely paused, not forgotten:**
+- `AGT-019` (CI/CD for Cloud Run) — the deploy-on-merge GitHub Actions job is written and on
+  `develop`, but needs the project owner's explicit go-ahead before creating the real GCP
+  Workload Identity Federation pool/provider/IAM binding it depends on. Not merged to `main` yet
+  (it would show as a failing check on every push until those exist).
 
 ## Next Planned Work
 
 - No blocking items remain in the original deployment chain. Anyone demoing this project live
   needs their own `enterprise-rag-platform` account with real content already ingested on it —
   that's now the demo's precondition, not something `agentic-ai` provisions for them.
-- Grafana Cloud observability and CI/CD (above) are the only remaining known work, and neither
-  has a ticket yet.
+- `AGT-019`: decide whether to set up Workload Identity Federation for CI/CD (see above) — the
+  only remaining open item in the whole ticket backlog.
