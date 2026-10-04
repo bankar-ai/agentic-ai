@@ -10,6 +10,7 @@ import logging
 
 from ddgs import DDGS
 
+from app.agents.sanitize import sanitize_evidence_text
 from app.agents.schemas import Evidence
 
 logger = logging.getLogger(__name__)
@@ -28,8 +29,10 @@ async def search_web(query: str, max_results: int = 3) -> list[Evidence]:
         logger.exception("Web search fallback failed for query: %s", query)
         return []
 
+    # AGT-029: web content is the least trusted input this system handles -- strip HTML, control
+    # characters, and invisible/bidi-override unicode before it ever reaches a prompt.
     return [
-        Evidence(text=result["body"], source="web", citation=result["href"])
+        Evidence(text=sanitize_evidence_text(result["body"]), source="web", citation=result["href"])
         for result in raw_results
         if "body" in result and "href" in result
     ]

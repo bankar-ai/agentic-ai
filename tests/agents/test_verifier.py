@@ -66,7 +66,11 @@ async def test_verify_answer_prompts_with_retrieved_evidence_not_writer_copy():
 
     async def fake_run(prompt: str) -> MagicMock:
         captured.append(prompt)
-        return MagicMock(output=VerificationResult(grounded=False, unsupported_claims=["Germany"], reasoning="x"))
+        fake_result = MagicMock(output=VerificationResult(grounded=False, unsupported_claims=["Germany"], reasoning="x"))
+        fake_result.usage.input_tokens = 10
+        fake_result.usage.output_tokens = 5
+        fake_result.response.model_name = "test-model"
+        return fake_result
 
     fake_agent.run = fake_run
     with patch("app.agents.verifier.Agent", return_value=fake_agent):
