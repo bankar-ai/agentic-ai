@@ -14,10 +14,6 @@ entry once it's resolved, don't just mark it done.
   Resets once per UTC day. Not a code bug; `gatekeeper_node`'s span and the `llm_generation_duration_seconds`
   metric are both confirmed working, including correctly on failure. Re-verify with one live query
   once the quota resets — see `AGT-021`/`AGT-022`'s own resolution notes.
-- **AGT-023 readable Vercel URL is blocked**: the new `bankar-ai-agentic-ai.vercel.app` alias is
-  gated by Vercel's own SSO deployment protection; `agentic-ai-psi-mauve.vercel.app` is the one
-  working public URL. Needs the project owner to decide whether to disable SSO protection for this
-  project (a real security-posture change) or drop the cosmetic goal. See `AGT-023`.
 - **AGT-024/026/027's frontend features aren't browser-verified**: the about page, session-expiry
   warning, draft-query preservation, and history panel were verified by code review, a clean
   build, and confirming the deployed bundle contains each feature's strings — not by an actual

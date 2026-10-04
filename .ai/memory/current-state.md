@@ -159,13 +159,16 @@ History belongs in `.ai/sessions/`, not here.
   (`AGT-013`), so `agentic-ai`'s backend would have to start holding per-user refresh-token state
   it doesn't have today. Scoped down to UX-only (warning + draft preservation) instead of
   defaulting into that trust-model change.
-- **Vercel URL rename attempted and blocked (`AGT-023`, 2026-10-04)**: tried the same fix
-  `enterprise-rag-platform` used (`ERP-057`, `vercel alias set`) for a readable URL. The new
-  alias (`bankar-ai-agentic-ai.vercel.app`) is gated by Vercel's own SSO deployment protection,
-  for reasons not fully root-caused (both projects report identical protection settings).
-  Disabling that protection is a real security-posture change, correctly blocked by the session's
-  own safety guard pending the project owner's explicit say-so.  `agentic-ai-psi-mauve.vercel.app`
-  remains the one working public URL.
+- **Readable Vercel URL shipped (`AGT-023`, 2026-10-04)**: a CLI `vercel alias set` attempt hit
+  Vercel's SSO deployment protection (root cause not fully pinned down); resolved instead by the
+  project owner connecting the GitHub repo and adding
+  `bankar-ai-agentic-rag-orchestrator.vercel.app` as a real project Domain marked Production, which
+  is exempted from SSO protection automatically. GitHub is now connected for auto-deploy on push
+  to `main`. Caught along the way: connecting GitHub left the project's Root Directory setting
+  blank (repo root) — the old CLI-only deploys had bypassed that setting by building from inside
+  `frontend/` directly, but a Git-triggered build would have failed without it set to `frontend`;
+  fixed before any such build ran. Both `agentic-ai-psi-mauve.vercel.app` and the new readable URL
+  work.
 - **Verification gap, named honestly**: `AGT-026`/`027`'s frontend features (session-expiry
   warning, draft preservation, history panel) were verified by code review, a clean build, and
   confirming the deployed JS bundle contains the feature strings -- not by an actual browser
