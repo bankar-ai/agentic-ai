@@ -147,6 +147,30 @@ History belongs in `.ai/sessions/`, not here.
   revision. Live-verified: the new probe is green, the error-outcome counter has a real sample,
   the retry histogram is correctly empty (no query has completed end-to-end yet), and all three
   new dashboard panels confirmed via the render API.
+- **Frontend UX improvements added (`AGT-024`/`025`/`026`/`027`, 2026-10-04):** came from the
+  project owner reviewing the live demo directly and asking five pointed questions. New
+  `GET /documents` (proxies `enterprise-rag-platform`'s own `GET /documents`/ERP-103) lets a
+  user see what's in their knowledge base before asking. Frontend gained an `/about` page, a
+  documents panel, client-side-only `localStorage` query history (no new backend dependency --
+  deliberate scope call, `agentic-ai` has no database of its own), and a session-expiry warning
+  + draft-query preservation on forced logout. Deployed as `agentic-ai-00021-pmn`. **Real
+  limitation found investigating true silent session refresh (`AGT-026`)**: can't be done without
+  a real architecture change -- `StaticTokenAuth` deliberately has no password and can't refresh
+  (`AGT-013`), so `agentic-ai`'s backend would have to start holding per-user refresh-token state
+  it doesn't have today. Scoped down to UX-only (warning + draft preservation) instead of
+  defaulting into that trust-model change.
+- **Vercel URL rename attempted and blocked (`AGT-023`, 2026-10-04)**: tried the same fix
+  `enterprise-rag-platform` used (`ERP-057`, `vercel alias set`) for a readable URL. The new
+  alias (`bankar-ai-agentic-ai.vercel.app`) is gated by Vercel's own SSO deployment protection,
+  for reasons not fully root-caused (both projects report identical protection settings).
+  Disabling that protection is a real security-posture change, correctly blocked by the session's
+  own safety guard pending the project owner's explicit say-so.  `agentic-ai-psi-mauve.vercel.app`
+  remains the one working public URL.
+- **Verification gap, named honestly**: `AGT-026`/`027`'s frontend features (session-expiry
+  warning, draft preservation, history panel) were verified by code review, a clean build, and
+  confirming the deployed JS bundle contains the feature strings -- not by an actual browser
+  click-through, since no browser tool was available this session. Worth a real click-through next
+  time one is.
 
 ## Known Gaps / Follow-ups
 
