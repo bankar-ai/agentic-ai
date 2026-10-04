@@ -3,7 +3,6 @@ it actually finishes (AGT-008: via `graph.astream(..., stream_mode="updates")`),
 `result` event once the graph reaches an end state.
 """
 
-import asyncio
 import json
 import logging
 import sys
@@ -12,6 +11,7 @@ from collections.abc import AsyncIterator
 from fastapi import APIRouter, Header, HTTPException
 from fastapi.responses import StreamingResponse
 from langgraph.graph.state import CompiledStateGraph
+from starlette.background import BackgroundTask
 
 from app.agents.research import KnowledgeBaseUnavailable
 from app.agents.schemas import GraphState, UserSession
@@ -193,9 +193,15 @@ async def query(
             detail="Log in with your enterprise-rag-platform account (Authorization + X-RAG-CSRF-Token headers) to use this service.",
         )
     settings = get_settings()
-    # AGT-031: fire-and-forget, throttled internally -- never awaited, so a slow or failed budget
-    # check can't add latency to (or fail) the query itself.
-    if settings.llm_provider == "openrouter" and settings.openrouter_api_key:
-        asyncio.create_task(maybe_record_openrouter_budget(settings.openrouter_api_key))
     graph = get_graph(user_session)
-    return StreamingResponse(_event_stream(graph, request.query, user_session), media_type="text/event-stream")
+    # AGT-031: a real Starlette BackgroundTask, not a bare `asyncio.create_task` -- the latter has
+    # no guaranteed owner once this function returns and can be cancelled before it runs; this one
+    # is tied to the response and Starlette runs it to completion after the stream finishes.
+    # Throttled internally and wrapped in try/except on its own, so a slow or failed budget check
+    # can't add latency to, or fail, the query itself.
+    background = None
+    if settings.llm_provider == "openrouter" and settings.openrouter_api_key:
+        background = BackgroundTask(maybe_record_openrouter_budget, settings.openrouter_api_key)
+    return StreamingResponse(
+        _event_stream(graph, request.query, user_session), media_type="text/event-stream", background=background
+    )
