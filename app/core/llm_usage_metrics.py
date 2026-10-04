@@ -25,6 +25,7 @@ from app.core.telemetry import get_meter
 _PRICE_PER_TOKEN_USD: dict[str, tuple[float, float]] = {
     # model: (input_price, output_price)
     "google/gemma-3-27b-it": (0.00000008, 0.00000045),
+    "mistralai/mistral-small-3.1-24b-instruct": (0.000000351, 0.000000555),
     "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free": (0.0, 0.0),
     "nvidia/nemotron-3.5-lightning:free": (0.0, 0.0),
 }

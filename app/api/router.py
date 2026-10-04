@@ -3,6 +3,7 @@ it actually finishes (AGT-008: via `graph.astream(..., stream_mode="updates")`),
 `result` event once the graph reaches an end state.
 """
 
+import asyncio
 import json
 import logging
 import sys
@@ -16,6 +17,7 @@ from app.agents.research import KnowledgeBaseUnavailable
 from app.agents.schemas import GraphState, UserSession
 from app.api.schemas import QueryRequest
 from app.core.config import get_settings
+from app.core.openrouter_budget import maybe_record_openrouter_budget
 from app.core.query_metrics import record_query_outcome, record_retry_count
 from app.core.tracing import get_tracer
 from app.graph.build import build_graph
@@ -190,5 +192,10 @@ async def query(
             status_code=401,
             detail="Log in with your enterprise-rag-platform account (Authorization + X-RAG-CSRF-Token headers) to use this service.",
         )
+    settings = get_settings()
+    # AGT-031: fire-and-forget, throttled internally -- never awaited, so a slow or failed budget
+    # check can't add latency to (or fail) the query itself.
+    if settings.llm_provider == "openrouter" and settings.openrouter_api_key:
+        asyncio.create_task(maybe_record_openrouter_budget(settings.openrouter_api_key))
     graph = get_graph(user_session)
     return StreamingResponse(_event_stream(graph, request.query, user_session), media_type="text/event-stream")
