@@ -1,12 +1,18 @@
-/** Client-side-only query history (AGT-027): browser `localStorage`, capped at 20 entries,
+/** Client-side-only query history (AGT-027): browser `localStorage`, capped at 20 entries stored,
  * per-device -- deliberately not server-side (agentic-ai has no database of its own, and adding
  * one just for this is a real infra decision not worth making for a "see my past few queries"
- * ask). Every read/write is wrapped in try/catch: a private window, cleared/blocked site data,
- * or any other storage failure must degrade to "no history", never break the query flow itself.
+ * ask -- see AGT-041 for that piece, once it exists). Every read/write is wrapped in try/catch: a
+ * private window, cleared/blocked site data, or any other storage failure must degrade to "no
+ * history", never break the query flow itself.
  */
+import type { TraceStep } from "./api";
+import { subscribeToStorageKey } from "./storageSync";
 
 const STORAGE_KEY = "agentic-ai.history";
-const MAX_ENTRIES = 20;
+const MAX_ENTRIES_STORED = 20;
+/** AGT-040: the UI only ever shows the most recent entries -- older ones stay in storage
+ * (useful once AGT-041's server-side history exists to reconcile against) but aren't rendered. */
+export const MAX_ENTRIES_SHOWN = 5;
 
 export interface HistoryEntry {
   id: string;
@@ -19,6 +25,11 @@ export interface HistoryEntry {
    * not a client-side timer. */
   mode: "agentic" | "direct";
   durationSeconds: number | null;
+  /** AGT-040: the full agent trace (agentic mode) so a history entry can be reopened and
+   * re-rendered exactly as it looked live, with no network round trip. Empty for direct mode. */
+  trace: TraceStep[];
+  /** AGT-040: Direct mode's source filename, so a reopened direct-mode entry can show it too. */
+  sourceFilename: string | null;
 }
 
 export function loadHistory(): HistoryEntry[] {
@@ -26,7 +37,14 @@ export function loadHistory(): HistoryEntry[] {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
+    if (!Array.isArray(parsed)) return [];
+    // Entries written before AGT-040 have no `trace`/`sourceFilename` -- default them so older
+    // stored history doesn't crash a reopen attempt.
+    return parsed.map((entry) => ({
+      trace: [],
+      sourceFilename: null,
+      ...entry,
+    }));
   } catch {
     return [];
   }
@@ -36,7 +54,7 @@ export function appendHistory(entry: Omit<HistoryEntry, "id" | "timestamp">): vo
   try {
     const existing = loadHistory();
     const next: HistoryEntry = { ...entry, id: crypto.randomUUID(), timestamp: Date.now() };
-    const trimmed = [next, ...existing].slice(0, MAX_ENTRIES);
+    const trimmed = [next, ...existing].slice(0, MAX_ENTRIES_STORED);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(trimmed));
   } catch {
     // Storage unavailable (private window, blocked site data, quota) -- history is best-effort.
@@ -58,6 +76,12 @@ export function clearHistory(): void {
   } catch {
     // Same as above.
   }
+}
+
+/** AGT-044: notifies `onChange` whenever another tab of the same browser appends/deletes/clears
+ * history, so this tab's in-memory state doesn't go stale until its next full reload. */
+export function subscribeToHistoryChanges(onChange: () => void): () => void {
+  return subscribeToStorageKey(STORAGE_KEY, onChange);
 }
 
 const DRAFT_KEY = "agentic-ai.draft-query";

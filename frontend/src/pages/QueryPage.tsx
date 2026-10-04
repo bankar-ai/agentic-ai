@@ -8,6 +8,8 @@ import {
   QueryError,
   type DocumentSummary,
 } from "../api";
+import { ResultPanel, formatDuration, type DisplayResult } from "../components/ResultPanel";
+import { loadCachedDocuments, saveCachedDocuments, subscribeToDocumentsCacheChanges } from "../documentsCache";
 import {
   appendHistory,
   clearHistory,
@@ -15,6 +17,8 @@ import {
   loadAndClearDraftQuery,
   loadHistory,
   saveDraftQuery,
+  subscribeToHistoryChanges,
+  MAX_ENTRIES_SHOWN,
   type HistoryEntry,
 } from "../history";
 import { decodeJwtExpiry } from "../jwt";
@@ -24,20 +28,15 @@ const EXPIRY_WARNING_WINDOW_MS = 5 * 60 * 1000; // AGT-026: warn 5 minutes befor
 
 type Mode = "agentic" | "direct";
 
-/** AGT-034: a shape both modes' results fit into, so the render below doesn't need two branches
- * for everything -- `trace` and `sourceFilename` are simply absent for the mode that has none. */
-interface DisplayResult {
-  mode: Mode;
-  trace: { agent?: string; [key: string]: unknown }[];
-  answer: string;
-  refused: boolean;
-  sourceFilename: string | null;
-  durationSeconds: number | null;
-}
-
-function formatDuration(seconds: number | null): string {
-  if (seconds === null) return "";
-  return seconds < 1 ? `${Math.round(seconds * 1000)}ms` : `${seconds.toFixed(1)}s`;
+function entryToDisplayResult(entry: HistoryEntry): DisplayResult {
+  return {
+    mode: entry.mode,
+    trace: entry.trace,
+    answer: entry.answer,
+    refused: entry.refused,
+    sourceFilename: entry.sourceFilename,
+    durationSeconds: entry.durationSeconds,
+  };
 }
 
 export function QueryPage() {
@@ -46,9 +45,12 @@ export function QueryPage() {
   const [mode, setMode] = useState<Mode>("agentic");
   const [query, setQuery] = useState(() => loadAndClearDraftQuery());
   const [result, setResult] = useState<DisplayResult | null>(null);
+  const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [documents, setDocuments] = useState<DocumentSummary[] | null>(null);
+  const [documents, setDocuments] = useState<DocumentSummary[] | null>(() =>
+    session ? loadCachedDocuments(session.email) : null
+  );
   const [documentsError, setDocumentsError] = useState<string | null>(null);
   const [history, setHistory] = useState<HistoryEntry[]>(() => loadHistory());
   const [expiryWarning, setExpiryWarning] = useState(false);
@@ -66,12 +68,31 @@ export function QueryPage() {
     return () => clearInterval(interval);
   }, [session]);
 
+  // AGT-038: the cached list (if any) already rendered synchronously above -- this silently
+  // revalidates against the live endpoint and updates the cache, without ever clearing existing
+  // content back to empty while the request is in flight.
   useEffect(() => {
     if (!session) return;
     fetchDocuments(session)
-      .then(setDocuments)
+      .then((docs) => {
+        setDocuments(docs);
+        saveCachedDocuments(session.email, docs);
+      })
       .catch((err) => setDocumentsError(err instanceof DocumentsError ? err.message : "Could not load documents."));
   }, [session]);
+
+  // AGT-044: another tab of the same browser refreshing its own documents cache (or this user
+  // logging in on a second tab) updates this tab's view live, no manual reload needed.
+  useEffect(() => {
+    if (!session) return;
+    return subscribeToDocumentsCacheChanges(session.email, () => {
+      setDocuments(loadCachedDocuments(session.email));
+    });
+  }, [session]);
+
+  // AGT-044: a query appended/deleted/cleared from another tab of the same browser updates this
+  // tab's history list live.
+  useEffect(() => subscribeToHistoryChanges(() => setHistory(loadHistory())), []);
 
   if (!session) {
     navigate("/");
@@ -82,6 +103,7 @@ export function QueryPage() {
     event.preventDefault();
     setError(null);
     setResult(null);
+    setSelectedHistoryId(null);
     setLoading(true);
     // Narrowed by the early `if (!session) { navigate(...); return null; }` above -- TS doesn't
     // carry that narrowing into this closure on its own.
@@ -119,6 +141,8 @@ export function QueryPage() {
         refused: display.refused,
         mode: display.mode,
         durationSeconds: display.durationSeconds,
+        trace: display.trace,
+        sourceFilename: display.sourceFilename,
       });
       setHistory(loadHistory());
     } catch (err) {
@@ -134,167 +158,198 @@ export function QueryPage() {
     }
   }
 
+  function handleOpenHistoryEntry(entry: HistoryEntry) {
+    setError(null);
+    setResult(entryToDisplayResult(entry));
+    setSelectedHistoryId(entry.id);
+  }
+
   function handleDeleteHistoryEntry(id: string) {
     deleteHistoryEntry(id);
     setHistory(loadHistory());
+    if (selectedHistoryId === id) {
+      setSelectedHistoryId(null);
+      setResult(null);
+    }
   }
 
   function handleClearHistory() {
     clearHistory();
     setHistory([]);
+    setSelectedHistoryId(null);
   }
 
+  const shownHistory = history.slice(0, MAX_ENTRIES_SHOWN);
+
   return (
-    <main className="query-page">
-      <header className="query-header">
-        <span>Logged in as {session.email}</span>
-        <button
-          type="button"
-          onClick={() => {
-            logout();
-            navigate("/");
-          }}
-        >
-          Log out
-        </button>
+    <div className="min-h-screen bg-slate-50">
+      <header className="border-b border-slate-200 bg-white px-6 py-3">
+        <div className="mx-auto flex max-w-3xl flex-wrap items-center justify-between gap-3">
+          <span className="text-lg font-semibold text-slate-900">Agentic RAG Orchestration</span>
+          <nav className="flex items-center gap-1" role="tablist" aria-label="Query mode">
+            {(["agentic", "direct"] as Mode[]).map((m) => (
+              <button
+                key={m}
+                type="button"
+                role="tab"
+                aria-selected={mode === m}
+                onClick={() => setMode(m)}
+                className={`border-b-2 px-3 py-1.5 text-sm font-medium transition-colors ${
+                  mode === m
+                    ? "border-slate-900 text-slate-900"
+                    : "border-transparent text-slate-500 hover:text-slate-900"
+                }`}
+              >
+                {m === "agentic" ? "Agentic RAG" : "Direct RAG"}
+              </button>
+            ))}
+          </nav>
+          <div className="flex items-center gap-3">
+            <Link
+              to="/about"
+              title="What is this?"
+              className="flex h-6 w-6 items-center justify-center rounded-full border border-slate-300 text-xs font-semibold text-slate-500 hover:bg-slate-100"
+            >
+              ?
+            </Link>
+            <span className="truncate text-sm text-slate-500" title={session.email}>
+              {session.email}
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                logout();
+                navigate("/");
+              }}
+              className="rounded-md bg-slate-100 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-200"
+            >
+              Log out
+            </button>
+          </div>
+        </div>
       </header>
 
-      <p className="subtitle">
-        Compare a single raw retrieval pass against the full Gatekeeper -&gt; Research -&gt; Writer
-        -&gt; Verifier agent graph, both against your own <code>enterprise-rag-platform</code>{" "}
-        documents. <Link to="/about">What is this?</Link>
-      </p>
-
-      {expiryWarning && (
-        <p className="warning">
-          Your session will expire soon -- finish your question, or you'll need to log in again
-          (your typed question will be saved for you).
+      <main className="mx-auto max-w-3xl space-y-4 px-6 py-6">
+        <p className="text-sm text-slate-500">
+          {mode === "agentic"
+            ? "Full pipeline: routes, retrieves, drafts, and verifies before answering."
+            : "Baseline: one retrieval pass, the top result shown as-is, no synthesis or verification."}
         </p>
-      )}
 
-      <details className="documents-panel">
-        <summary>Your documents {documents ? `(${documents.length})` : ""}</summary>
-        {documentsError && <p className="error">{documentsError}</p>}
-        {documents && documents.length === 0 && (
-          <p className="subtitle">
-            No documents yet -- ingest one on <code>enterprise-rag-platform</code> directly, then
-            come back here.
+        {expiryWarning && (
+          <p className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            Your session will expire soon -- finish your question, or you'll need to log in again
+            (your typed question will be saved for you).
           </p>
         )}
-        {documents && documents.length > 0 && (
-          <ul className="documents-list">
-            {documents.map((doc) => (
-              <li key={doc.documentId}>
-                {doc.filename} <span className="subtitle">({new Date(doc.createdAt).toLocaleDateString()})</span>
+
+        <details className="rounded-lg border border-slate-200 bg-white px-4 py-3">
+          <summary className="cursor-pointer text-sm font-medium text-slate-900">
+            Your documents {documents ? `(${documents.length})` : ""}
+          </summary>
+          {documentsError && <p className="mt-2 text-sm text-red-600">{documentsError}</p>}
+          {documents && documents.length === 0 && (
+            <p className="mt-2 text-sm text-slate-500">
+              No documents yet -- ingest one on <code>enterprise-rag-platform</code> directly, then
+              come back here.
+            </p>
+          )}
+          {documents && documents.length > 0 && (
+            <ul className="mt-2 divide-y divide-slate-100">
+              {documents.map((doc) => (
+                <li key={doc.documentId} className="flex items-center gap-2 py-1.5 text-sm">
+                  <span className="shrink-0">{"\u{1F4C4}"}</span>
+                  <span className="min-w-0 flex-1 truncate text-slate-700">{doc.filename}</span>
+                  <span className="shrink-0 text-xs text-slate-400">
+                    {new Date(doc.createdAt).toLocaleDateString()}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </details>
+
+        <form onSubmit={handleSubmit} className="flex gap-2">
+          <input
+            type="text"
+            placeholder="Ask a question..."
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            required
+            className="flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-slate-500 focus:outline-none"
+          />
+          <button
+            type="submit"
+            disabled={loading}
+            className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-60"
+          >
+            {loading ? "Thinking..." : "Ask"}
+          </button>
+        </form>
+
+        {error && <p className="text-sm text-red-600">{error}</p>}
+
+        {result && <ResultPanel result={result} />}
+
+        <details className="rounded-lg border border-slate-200 bg-white px-4 py-3" open>
+          <summary className="flex cursor-pointer items-center justify-between text-sm font-medium text-slate-900">
+            <span>
+              Past questions, this browser only ({shownHistory.length}
+              {history.length > shownHistory.length ? ` of ${history.length} stored` : ""})
+            </span>
+            {history.length > 0 && (
+              <button
+                type="button"
+                className="text-xs font-normal text-blue-600 underline hover:text-blue-800"
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  handleClearHistory();
+                }}
+              >
+                Clear all
+              </button>
+            )}
+          </summary>
+          {shownHistory.length === 0 && <p className="mt-2 text-sm text-slate-500">No past questions yet.</p>}
+          <ul className="mt-2 divide-y divide-slate-100">
+            {shownHistory.map((entry) => (
+              <li key={entry.id}>
+                <div
+                  className={`flex items-start justify-between gap-3 rounded-md px-2 py-2 ${
+                    selectedHistoryId === entry.id ? "bg-slate-100" : "hover:bg-slate-50"
+                  }`}
+                >
+                  <button
+                    type="button"
+                    onClick={() => handleOpenHistoryEntry(entry)}
+                    className="min-w-0 flex-1 text-left"
+                  >
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <strong className="truncate text-sm text-slate-900">{entry.question}</strong>
+                      <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600">
+                        {entry.mode === "direct" ? "Direct" : "Agentic"}
+                      </span>
+                      {entry.durationSeconds !== null && (
+                        <span className="text-xs text-slate-400">{formatDuration(entry.durationSeconds)}</span>
+                      )}
+                    </div>
+                    <p className="mt-0.5 truncate text-xs text-slate-500">{entry.answer}</p>
+                    <span className="text-xs text-slate-400">{new Date(entry.timestamp).toLocaleString()}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="shrink-0 text-xs text-blue-600 underline hover:text-blue-800"
+                    onClick={() => handleDeleteHistoryEntry(entry.id)}
+                  >
+                    Delete
+                  </button>
+                </div>
               </li>
             ))}
           </ul>
-        )}
-      </details>
-
-      <div className="mode-toggle" role="radiogroup" aria-label="Query mode">
-        <button
-          type="button"
-          className={mode === "agentic" ? "mode-button mode-button-active" : "mode-button"}
-          aria-pressed={mode === "agentic"}
-          onClick={() => setMode("agentic")}
-        >
-          Agentic RAG
-        </button>
-        <button
-          type="button"
-          className={mode === "direct" ? "mode-button mode-button-active" : "mode-button"}
-          aria-pressed={mode === "direct"}
-          onClick={() => setMode("direct")}
-        >
-          Direct RAG
-        </button>
-      </div>
-      <p className="subtitle">
-        {mode === "agentic"
-          ? "Full pipeline: routes, retrieves, drafts, and verifies before answering."
-          : "Baseline: one retrieval pass, the top result shown as-is, no synthesis or verification."}
-      </p>
-
-      <form onSubmit={handleSubmit} className="query-form">
-        <input
-          type="text"
-          placeholder="Ask a question..."
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          required
-        />
-        <button type="submit" disabled={loading}>
-          {loading ? "Thinking..." : "Ask"}
-        </button>
-      </form>
-
-      {error && <p className="error">{error}</p>}
-
-      {result && (
-        <section className="result">
-          <div className="result-meta">
-            <span className="mode-badge">{result.mode === "agentic" ? "Agentic RAG" : "Direct RAG"}</span>
-            {result.durationSeconds !== null && (
-              <span className="duration-badge">{formatDuration(result.durationSeconds)}</span>
-            )}
-          </div>
-          {result.trace.length > 0 && (
-            <details open>
-              <summary>Agent trace</summary>
-              <ol>
-                {result.trace.map((step, index) => (
-                  <li key={index}>
-                    <strong>{step.agent ?? "?"}</strong>: {JSON.stringify(step)}
-                  </li>
-                ))}
-              </ol>
-            </details>
-          )}
-          <p className="answer">{result.answer}</p>
-          {result.sourceFilename && <p className="subtitle">(source: {result.sourceFilename})</p>}
-        </section>
-      )}
-
-      <details className="history-panel">
-        <summary>
-          Past questions, this browser only ({history.length}){" "}
-          {history.length > 0 && (
-            <button
-              type="button"
-              className="link-button"
-              onClick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                handleClearHistory();
-              }}
-            >
-              Clear all
-            </button>
-          )}
-        </summary>
-        {history.length === 0 && <p className="subtitle">No past questions yet.</p>}
-        <ul className="history-list">
-          {history.map((entry) => (
-            <li key={entry.id}>
-              <div>
-                <strong>{entry.question}</strong>{" "}
-                <span className="mode-badge mode-badge-small">
-                  {entry.mode === "direct" ? "Direct" : "Agentic"}
-                </span>
-                {entry.durationSeconds !== null && (
-                  <span className="subtitle"> · {formatDuration(entry.durationSeconds)}</span>
-                )}
-                <p className="subtitle">{entry.answer}</p>
-                <span className="subtitle">{new Date(entry.timestamp).toLocaleString()}</span>
-              </div>
-              <button type="button" className="link-button" onClick={() => handleDeleteHistoryEntry(entry.id)}>
-                Delete
-              </button>
-            </li>
-          ))}
-        </ul>
-      </details>
-    </main>
+        </details>
+      </main>
+    </div>
   );
 }
