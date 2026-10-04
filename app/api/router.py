@@ -19,6 +19,7 @@ from app.agents.schemas import GraphState, UserSession
 from app.api.schemas import QueryRequest
 from app.core.config import get_settings
 from app.core.openrouter_budget import maybe_record_openrouter_budget
+from app.core.query_cache import QueryCache, decode_user_id, get_query_cache
 from app.core.query_metrics import (
     record_query_duration,
     record_query_outcome,
@@ -93,9 +94,50 @@ def _format_sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
+async def _record_history_safely(cache: QueryCache, **kwargs) -> None:
+    """A history-write failure must never break the query response the user is actually waiting
+    on (AGT-041) -- logged and swallowed, not raised."""
+    try:
+        await cache.record(**kwargs)
+    except Exception:
+        logger.exception("Failed to record query history (non-fatal)")
+
+
 async def _event_stream(
-    graph: CompiledStateGraph, query: str, user_session: UserSession | None = None
+    graph: CompiledStateGraph,
+    query: str,
+    user_session: UserSession | None = None,
+    cache: QueryCache | None = None,
+    user_id: str | None = None,
 ) -> AsyncIterator[str]:
+    # AGT-041: a cache hit replays the stored trace/result with no LLM/retrieval work at all --
+    # checked before anything else, so a repeat question is near-instant.
+    if cache is not None and user_id is not None:
+        cached = await cache.lookup(user_id, "agentic", query)
+        if cached is not None:
+            for step in cached.trace:
+                yield _format_sse("step", step)
+            record_query_outcome("refused" if cached.refused else "completed")
+            record_query_duration("refused" if cached.refused else "completed", "agentic", 0.0)
+            await _record_history_safely(
+                cache,
+                user_id=user_id,
+                mode="agentic",
+                question=query,
+                answer=cached.answer,
+                refused=cached.refused,
+                trace=cached.trace,
+                source_filename=None,
+                duration_seconds=0.0,
+                served_from_cache=True,
+            )
+            yield _format_sse("result", {
+                "final_answer": None if cached.refused else cached.answer,
+                "refused": cached.refused,
+                "duration_seconds": 0.0,
+            })
+            return
+
     initial_state: GraphState = {
         "query": query, "user_session": user_session, "gatekeeper_decision": None, "evidence": [],
         "draft": None, "verification": None, "retry_count": 0, "final_answer": None, "refused": False,
@@ -147,6 +189,19 @@ async def _event_stream(
     record_query_outcome(outcome)
     record_retry_count(final_state.get("retry_count", 0))
     record_query_duration(outcome, "agentic", duration_seconds)
+    if cache is not None and user_id is not None:
+        await _record_history_safely(
+            cache,
+            user_id=user_id,
+            mode="agentic",
+            question=query,
+            answer=final_state["final_answer"] or "",
+            refused=final_state["refused"],
+            trace=final_state["trace"],
+            source_filename=None,
+            duration_seconds=duration_seconds,
+            served_from_cache=False,
+        )
     yield _format_sse("result", {
         "final_answer": final_state["final_answer"],
         "refused": final_state["refused"],
@@ -208,6 +263,33 @@ async def query_direct(
             detail="Log in with your enterprise-rag-platform account (Authorization + X-RAG-CSRF-Token headers) to use this service.",
         )
     settings = get_settings()
+    cache = await get_query_cache(settings.database_url)
+    user_id = decode_user_id(user_session.access_token) if cache is not None else None
+
+    # AGT-041: a cache hit skips the retrieval call entirely.
+    if cache is not None and user_id is not None:
+        cached = await cache.lookup(user_id, "direct", request.query)
+        if cached is not None:
+            record_query_outcome("refused" if cached.refused else "completed")
+            record_query_duration("refused" if cached.refused else "completed", "direct", 0.0)
+            await _record_history_safely(
+                cache,
+                user_id=user_id,
+                mode="direct",
+                question=request.query,
+                answer=cached.answer,
+                refused=cached.refused,
+                trace=[],
+                source_filename=cached.source_filename,
+                duration_seconds=0.0,
+                served_from_cache=True,
+            )
+            return DirectQueryResult(
+                text=None if cached.refused else cached.answer,
+                source_filename=cached.source_filename,
+                duration_seconds=0.0,
+            )
+
     auth = StaticTokenAuth(user_session.access_token, user_session.csrf_token)
     client = RagPlatformRetrievalClient(settings.rag_platform_base_url, auth, get_shared_rag_platform_client())
     start_time = time.monotonic()
@@ -220,6 +302,19 @@ async def query_direct(
     outcome = "completed" if result.text is not None else "refused"
     record_query_outcome(outcome)
     record_query_duration(outcome, "direct", duration_seconds)
+    if cache is not None and user_id is not None:
+        await _record_history_safely(
+            cache,
+            user_id=user_id,
+            mode="direct",
+            question=request.query,
+            answer=result.text or "",
+            refused=result.text is None,
+            trace=[],
+            source_filename=result.source_filename,
+            duration_seconds=duration_seconds,
+            served_from_cache=False,
+        )
     return result.model_copy(update={"duration_seconds": duration_seconds})
 
 
@@ -258,4 +353,9 @@ async def query(
     if settings.llm_provider == "openrouter" and settings.openrouter_api_key:
         await maybe_record_openrouter_budget(settings.openrouter_api_key)
     graph = get_graph(user_session)
-    return StreamingResponse(_event_stream(graph, request.query, user_session), media_type="text/event-stream")
+    cache = await get_query_cache(settings.database_url)
+    user_id = decode_user_id(user_session.access_token) if cache is not None else None
+    return StreamingResponse(
+        _event_stream(graph, request.query, user_session, cache=cache, user_id=user_id),
+        media_type="text/event-stream",
+    )
