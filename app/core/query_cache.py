@@ -76,6 +76,21 @@ class CachedQueryResult(BaseModel):
     source_filename: str | None
 
 
+class HistoryEntry(BaseModel):
+    """One row of the caller's own query history (AGT-044 part 2) -- the durable, server-side
+    source of truth a second device/tab can read, unlike the original `localStorage`-only list
+    (AGT-027), which only the browser that made each query could ever see."""
+
+    question: str
+    answer: str
+    refused: bool
+    mode: str
+    trace: list[dict]
+    source_filename: str | None
+    duration_seconds: float | None
+    created_at: datetime
+
+
 class QueryCache:
     """Thin wrapper around an `asyncpg.Pool` -- a class (not bare module functions) so tests can
     construct one against a fake/mocked pool without touching the module-level singleton below.
@@ -113,6 +128,39 @@ class QueryCache:
             trace=json.loads(trace) if isinstance(trace, str) else trace,
             source_filename=row["source_filename"],
         )
+
+    async def list_recent(self, user_id: str, limit: int = 5) -> list[HistoryEntry]:
+        """The caller's own most recent queries across both modes, newest first (AGT-044 part 2)
+        -- the server-side source of truth that makes two devices (or a second tab reading this
+        instead of its own `localStorage`) agree on the same recent history, not just the one
+        browser that happened to ask each question."""
+        rows = await self._pool.fetch(
+            """
+            SELECT question, answer, refused, mode, trace, source_filename, duration_seconds, created_at
+            FROM query_history
+            WHERE user_id = $1
+            ORDER BY created_at DESC
+            LIMIT $2
+            """,
+            user_id,
+            limit,
+        )
+        entries = []
+        for row in rows:
+            trace = row["trace"]
+            entries.append(
+                HistoryEntry(
+                    question=row["question"],
+                    answer=row["answer"],
+                    refused=row["refused"],
+                    mode=row["mode"],
+                    trace=json.loads(trace) if isinstance(trace, str) else trace,
+                    source_filename=row["source_filename"],
+                    duration_seconds=row["duration_seconds"],
+                    created_at=row["created_at"],
+                )
+            )
+        return entries
 
     async def record(
         self,

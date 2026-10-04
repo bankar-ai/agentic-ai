@@ -19,7 +19,12 @@ from app.agents.schemas import GraphState, UserSession
 from app.api.schemas import QueryRequest
 from app.core.config import get_settings
 from app.core.openrouter_budget import maybe_record_openrouter_budget
-from app.core.query_cache import QueryCache, decode_user_id, get_query_cache
+from app.core.query_cache import (
+    HistoryEntry,
+    QueryCache,
+    decode_user_id,
+    get_query_cache,
+)
 from app.core.query_metrics import (
     record_query_duration,
     record_query_outcome,
@@ -216,6 +221,34 @@ async def health() -> dict[str, str]:
     probing it every 5 minutes costs nothing against either's quota.
     """
     return {"status": "ok"}
+
+
+@router.get("/history")
+async def history(
+    authorization: str | None = Header(default=None),
+    x_rag_csrf_token: str | None = Header(default=None),
+    limit: int = 5,
+) -> list[HistoryEntry]:
+    """The caller's own most recent queries, newest first (AGT-044 part 2) -- server-side, so two
+    devices (or a second tab) logged into the same account see the same recent history, not just
+    whatever each browser's own `localStorage` happens to hold. Empty list (not an error) when
+    `DATABASE_URL` isn't configured or the caller has no `sub` claim to look up -- the frontend's
+    `localStorage` list is the fallback, not something this endpoint needs to guarantee.
+    """
+    user_session = extract_user_session(authorization, x_rag_csrf_token)
+    if user_session is None:
+        raise HTTPException(
+            status_code=401,
+            detail="Log in with your enterprise-rag-platform account (Authorization + X-RAG-CSRF-Token headers) to use this service.",
+        )
+    settings = get_settings()
+    cache = await get_query_cache(settings.database_url)
+    if cache is None:
+        return []
+    user_id = decode_user_id(user_session.access_token)
+    if user_id is None:
+        return []
+    return await cache.list_recent(user_id, limit=limit)
 
 
 @router.get("/documents")

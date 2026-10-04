@@ -1,5 +1,6 @@
 import base64
 import json
+from datetime import UTC, datetime
 
 import pytest
 
@@ -37,10 +38,12 @@ class _FakePool:
     """Stands in for `asyncpg.Pool` -- records every call so tests can assert on the exact SQL
     parameters without a real Postgres connection."""
 
-    def __init__(self, fetchrow_result=None):
+    def __init__(self, fetchrow_result=None, fetch_result=None):
         self.fetchrow_result = fetchrow_result
+        self.fetch_result = fetch_result or []
         self.fetchrow_calls: list[tuple] = []
         self.execute_calls: list[tuple] = []
+        self.fetch_calls: list[tuple] = []
 
     async def fetchrow(self, query, *args):
         self.fetchrow_calls.append((query, args))
@@ -48,6 +51,10 @@ class _FakePool:
 
     async def execute(self, query, *args):
         self.execute_calls.append((query, args))
+
+    async def fetch(self, query, *args):
+        self.fetch_calls.append((query, args))
+        return self.fetch_result
 
 
 @pytest.mark.asyncio
@@ -127,3 +134,36 @@ async def test_record_inserts_with_the_normalized_question_and_given_fields():
     assert args[3] == "  What IS X?  "
     assert args[7] == "doc.pdf"
     assert args[9] is False
+
+
+@pytest.mark.asyncio
+async def test_list_recent_returns_entries_newest_first_order_preserved():
+    rows = [
+        {
+            "question": "What is X?",
+            "answer": "x",
+            "refused": False,
+            "mode": "agentic",
+            "trace": [{"agent": "gatekeeper"}],
+            "source_filename": None,
+            "duration_seconds": 1.2,
+            "created_at": datetime(2026, 10, 4, 12, 0, tzinfo=UTC),
+        }
+    ]
+    pool = _FakePool(fetch_result=rows)
+    cache = QueryCache(pool)
+    entries = await cache.list_recent("user-1", limit=5)
+    assert len(entries) == 1
+    assert entries[0].question == "What is X?"
+    assert entries[0].mode == "agentic"
+    assert entries[0].trace == [{"agent": "gatekeeper"}]
+
+
+@pytest.mark.asyncio
+async def test_list_recent_scopes_by_user_id_and_passes_the_limit():
+    pool = _FakePool(fetch_result=[])
+    cache = QueryCache(pool)
+    await cache.list_recent("user-1", limit=5)
+    _query, args = pool.fetch_calls[0]
+    assert args[0] == "user-1"
+    assert args[1] == 5
