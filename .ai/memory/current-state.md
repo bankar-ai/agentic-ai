@@ -119,20 +119,23 @@ History belongs in `.ai/sessions/`, not here.
 Tracked as tickets in `.ai/tickets/` rather than duplicated here in full — this section is a quick
 index, read the ticket for detail.
 
-**Not blocking deployment, worth doing:**
-- `AGT-008` — SSE/UI deliver the trace only after the graph completes, not per-step as the spec
-  describes.
-- `AGT-009` — `get_graph()`'s clients (httpx, auth) are rebuilt and never reused/closed per request.
-- `AGT-011` — evaluation milestone (Langfuse datasets/scores), soft-blocked on
-  `enterprise-rag-platform`'s `ERP-112`.
-- `AGT-012` — small polish items from the final review (friendlier MCP error messages, an
-  unclosed httpx client in the MCP server, inline-citation cross-checking).
+**No open tickets remain** — every `AGT-*` ticket (`001`-`017`) is Done. See each ticket for
+detail; `AGT-008`/`AGT-009`/`AGT-012` (2026-10-03/04) landed together with a real concurrency bug
+found and fixed along the way (`StaticTokenAuth` was unsafe to share across concurrent
+different-user requests); `AGT-011` (2026-10-04) added `scripts/run_eval.py`, a 4-case regression
+check against the real LLM, scoring to Langfuse when configured.
 
-**Done** (`AGT-002`, `AGT-003`, `AGT-004`, `AGT-005`, `AGT-006`, `AGT-007`, `AGT-010`, `AGT-013`,
-`AGT-014`, `AGT-015`, `AGT-016`, `AGT-017`) — see each ticket for detail.
+**Not yet ticketed, flagged for the project owner (2026-10-03):**
+- Grafana Cloud observability — `enterprise-rag-platform` already has a reusable stack/dashboard
+  ("AI Platforms — Service Observability") built to accept a second project via a `service_name`
+  picker; `agentic-ai` isn't wired into it yet.
+- CI/CD for Cloud Run — every deploy so far has been a manual `gcloud run deploy`; no pipeline
+  deploys on merge to `main`.
 
 ## Next Planned Work
 
 - No blocking items remain in the original deployment chain. Anyone demoing this project live
   needs their own `enterprise-rag-platform` account with real content already ingested on it —
   that's now the demo's precondition, not something `agentic-ai` provisions for them.
+- Grafana Cloud observability and CI/CD (above) are the only remaining known work, and neither
+  has a ticket yet.
