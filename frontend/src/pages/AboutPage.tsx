@@ -16,6 +16,12 @@ export function AboutPage() {
           <li><strong>Verifier</strong> -- checks the draft against the evidence and rejects fabricated citations, looping back to Research if it fails</li>
         </ol>
         <p>
+          <strong>Direct RAG mode</strong> (the toggle on the query page) skips all of that: one
+          retrieval pass, the single top-ranked chunk shown exactly as stored, no synthesis, no
+          verification. It's the baseline the agentic pipeline above is compared against -- ask the
+          same question in both modes to see what the extra steps actually buy you.
+        </p>
+        <p>
           <strong>What you need:</strong> a real <code>enterprise-rag-platform</code> account with
           content already ingested on it. There is no shared demo account -- every query runs
           against your own documents, and an account with nothing ingested will have nothing to

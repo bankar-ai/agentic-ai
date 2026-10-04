@@ -6,18 +6,24 @@ it actually finishes (AGT-008: via `graph.astream(..., stream_mode="updates")`),
 import json
 import logging
 import sys
+import time
 from collections.abc import AsyncIterator
 
 from fastapi import APIRouter, Header, HTTPException
 from fastapi.responses import StreamingResponse
 from langgraph.graph.state import CompiledStateGraph
 
+from app.agents.direct_query import DirectQueryResult, run_direct_query
 from app.agents.research import KnowledgeBaseUnavailable
 from app.agents.schemas import GraphState, UserSession
 from app.api.schemas import QueryRequest
 from app.core.config import get_settings
 from app.core.openrouter_budget import maybe_record_openrouter_budget
-from app.core.query_metrics import record_query_outcome, record_retry_count
+from app.core.query_metrics import (
+    record_query_duration,
+    record_query_outcome,
+    record_retry_count,
+)
 from app.core.tracing import get_tracer
 from app.graph.build import build_graph
 from app.rag_client.auth import RagPlatformAuthError, StaticTokenAuth
@@ -26,7 +32,10 @@ from app.rag_client.documents import (
     RagPlatformDocumentsClient,
     RagPlatformDocumentsError,
 )
-from app.rag_client.retrieval import RagPlatformRetrievalError
+from app.rag_client.retrieval import (
+    RagPlatformRetrievalClient,
+    RagPlatformRetrievalError,
+)
 from app.rag_client.shared_client import get_shared_rag_platform_client
 
 _BEARER_PREFIX = "Bearer "
@@ -92,6 +101,9 @@ async def _event_stream(
         "draft": None, "verification": None, "retry_count": 0, "final_answer": None, "refused": False,
         "trace": [],
     }
+    # AGT-036: start of this generator to the final event -- the authoritative, server-side
+    # duration (excludes client network overhead a browser-side stopwatch would include).
+    start_time = time.monotonic()
     # The 200 status and headers are already sent once this generator starts, so a failure here
     # can't become an HTTP error status -- it must surface as an explicit `error` event instead of
     # the stream ending silently with an empty body. Any `step` events already yielded before the
@@ -106,6 +118,7 @@ async def _event_stream(
         # Upstream response bodies stay in the server log, not in the client-facing message.
         logger.exception("RAG platform unavailable while answering query")
         record_query_outcome("error")
+        record_query_duration("error", "agentic", time.monotonic() - start_time)
         yield _format_sse("error", {
             "type": type(exc).__name__,
             "message": "The knowledge base (enterprise-rag-platform) is unavailable or rejected authentication.",
@@ -116,6 +129,7 @@ async def _event_stream(
         # instead of leaking "ToolError" (or similar) straight to the client.
         logger.exception("Knowledge-base MCP tool call failed while answering query")
         record_query_outcome("error")
+        record_query_duration("error", "agentic", time.monotonic() - start_time)
         yield _format_sse("error", {
             "type": "KnowledgeBaseUnavailable",
             "message": "The knowledge base is temporarily unavailable. Please try again shortly.",
@@ -125,11 +139,19 @@ async def _event_stream(
         # Unexpected failures: report the type only; details stay in the server log.
         logger.exception("Agent graph failed while answering query")
         record_query_outcome("error")
+        record_query_duration("error", "agentic", time.monotonic() - start_time)
         yield _format_sse("error", {"type": type(exc).__name__, "message": "Query failed; see server logs for details."})
         return
-    record_query_outcome("refused" if final_state["refused"] else "completed")
+    outcome = "refused" if final_state["refused"] else "completed"
+    duration_seconds = time.monotonic() - start_time
+    record_query_outcome(outcome)
     record_retry_count(final_state.get("retry_count", 0))
-    yield _format_sse("result", {"final_answer": final_state["final_answer"], "refused": final_state["refused"]})
+    record_query_duration(outcome, "agentic", duration_seconds)
+    yield _format_sse("result", {
+        "final_answer": final_state["final_answer"],
+        "refused": final_state["refused"],
+        "duration_seconds": duration_seconds,
+    })
 
 
 @router.get("/health")
@@ -165,6 +187,40 @@ async def documents(
         return await client.list_documents(limit=limit, offset=offset)
     except (RagPlatformDocumentsError, RagPlatformAuthError) as exc:
         raise HTTPException(status_code=502, detail=f"enterprise-rag-platform is unavailable: {exc}") from None
+
+
+@router.post("/query/direct")
+async def query_direct(
+    request: QueryRequest,
+    authorization: str | None = Header(default=None),
+    x_rag_csrf_token: str | None = Header(default=None),
+) -> DirectQueryResult:
+    """Run one retrieval pass and return the top chunk verbatim, no synthesis (AGT-034).
+
+    The baseline the full Gatekeeper->Research->Writer->Verifier pipeline (`POST /query`) is
+    compared against -- same auth contract, same shared retrieval logic as the local Gradio demo
+    (`app/agents/direct_query.py`), just without the agent graph around it.
+    """
+    user_session = extract_user_session(authorization, x_rag_csrf_token)
+    if user_session is None:
+        raise HTTPException(
+            status_code=401,
+            detail="Log in with your enterprise-rag-platform account (Authorization + X-RAG-CSRF-Token headers) to use this service.",
+        )
+    settings = get_settings()
+    auth = StaticTokenAuth(user_session.access_token, user_session.csrf_token)
+    client = RagPlatformRetrievalClient(settings.rag_platform_base_url, auth, get_shared_rag_platform_client())
+    start_time = time.monotonic()
+    try:
+        result = await run_direct_query(client, request.query)
+    except (RagPlatformRetrievalError, RagPlatformAuthError) as exc:
+        record_query_duration("error", "direct", time.monotonic() - start_time)
+        raise HTTPException(status_code=502, detail=f"enterprise-rag-platform is unavailable: {exc}") from None
+    duration_seconds = time.monotonic() - start_time
+    outcome = "completed" if result.text is not None else "refused"
+    record_query_outcome(outcome)
+    record_query_duration(outcome, "direct", duration_seconds)
+    return result.model_copy(update={"duration_seconds": duration_seconds})
 
 
 @router.post("/query")

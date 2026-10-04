@@ -12,6 +12,7 @@ from app.core.telemetry import get_meter
 
 _outcome_counter: Counter | None = None
 _retry_histogram: Histogram | None = None
+_duration_histogram: Histogram | None = None
 
 
 def _get_outcome_counter() -> Counter:
@@ -35,6 +36,19 @@ def _get_retry_histogram() -> Histogram:
     return _retry_histogram
 
 
+def _get_duration_histogram() -> Histogram:
+    global _duration_histogram
+    if _duration_histogram is None:
+        # No `unit=` kwarg: the OTel-to-Prometheus bridge appends it to the metric name, turning
+        # a clean `_seconds` name into an unqueryable `_seconds_s` -- found and fixed twice
+        # already today (AGT-030, AGT-031) for the exact same reason with `unit="USD"`.
+        _duration_histogram = get_meter().create_histogram(
+            name="agentic_ai_query_duration_seconds",
+            description="End-to-end /query or /query/direct duration, by outcome and mode (agentic/direct)",
+        )
+    return _duration_histogram
+
+
 def record_query_outcome(outcome: str) -> None:
     """Record how a `/query` call ended. `outcome` is one of completed/refused/error."""
     _get_outcome_counter().add(1, attributes={"outcome": outcome})
@@ -43,3 +57,8 @@ def record_query_outcome(outcome: str) -> None:
 def record_retry_count(retry_count: int) -> None:
     """Record how many Verifier -> Research retries a completed/refused query took."""
     _get_retry_histogram().record(retry_count)
+
+
+def record_query_duration(outcome: str, mode: str, duration_seconds: float) -> None:
+    """Record end-to-end query duration (AGT-036). `mode` is "agentic" or "direct"."""
+    _get_duration_histogram().record(duration_seconds, attributes={"outcome": outcome, "mode": mode})

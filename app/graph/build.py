@@ -78,7 +78,15 @@ def build_graph(
         with otel_tracer.start_as_current_span("verifier_node"):
             verification = await verify_answer(model, state["draft"], state["evidence"])
         state["verification"] = verification
-        step = {"agent": "verifier", "grounded": verification.grounded}
+        # AGT-035: reasoning/unsupported_claims were computed and immediately discarded before --
+        # a real rejection was completely undebuggable after the fact (confirmed live: not in
+        # Langfuse, not logged, not in the API response, because it was never sent anywhere).
+        step = {
+            "agent": "verifier",
+            "grounded": verification.grounded,
+            "reasoning": verification.reasoning,
+            "unsupported_claims": verification.unsupported_claims,
+        }
         state["trace"].append(step)
         tracer.trace_step(step)
         if verification.grounded:

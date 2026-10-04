@@ -1,6 +1,13 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { DocumentsError, fetchDocuments, runQuery, QueryError, type DocumentSummary, type QueryResult } from "../api";
+import {
+  DocumentsError,
+  fetchDocuments,
+  runDirectQuery,
+  runQuery,
+  QueryError,
+  type DocumentSummary,
+} from "../api";
 import {
   appendHistory,
   clearHistory,
@@ -15,11 +22,30 @@ import { useSession } from "../session";
 
 const EXPIRY_WARNING_WINDOW_MS = 5 * 60 * 1000; // AGT-026: warn 5 minutes before the token expires
 
+type Mode = "agentic" | "direct";
+
+/** AGT-034: a shape both modes' results fit into, so the render below doesn't need two branches
+ * for everything -- `trace` and `sourceFilename` are simply absent for the mode that has none. */
+interface DisplayResult {
+  mode: Mode;
+  trace: { agent?: string; [key: string]: unknown }[];
+  answer: string;
+  refused: boolean;
+  sourceFilename: string | null;
+  durationSeconds: number | null;
+}
+
+function formatDuration(seconds: number | null): string {
+  if (seconds === null) return "";
+  return seconds < 1 ? `${Math.round(seconds * 1000)}ms` : `${seconds.toFixed(1)}s`;
+}
+
 export function QueryPage() {
   const { session, logout } = useSession();
   const navigate = useNavigate();
+  const [mode, setMode] = useState<Mode>("agentic");
   const [query, setQuery] = useState(() => loadAndClearDraftQuery());
-  const [result, setResult] = useState<QueryResult | null>(null);
+  const [result, setResult] = useState<DisplayResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [documents, setDocuments] = useState<DocumentSummary[] | null>(null);
@@ -57,15 +83,42 @@ export function QueryPage() {
     setError(null);
     setResult(null);
     setLoading(true);
+    // Narrowed by the early `if (!session) { navigate(...); return null; }` above -- TS doesn't
+    // carry that narrowing into this closure on its own.
+    const activeSession = session as NonNullable<typeof session>;
     try {
-      // Narrowed by the early `if (!session) { navigate(...); return null; }` above -- TS
-      // doesn't carry that narrowing into this closure on its own.
-      const outcome = await runQuery(query, session as NonNullable<typeof session>);
-      setResult(outcome);
+      let display: DisplayResult;
+      if (mode === "direct") {
+        const outcome = await runDirectQuery(query, activeSession);
+        display = {
+          mode: "direct",
+          trace: [],
+          answer: outcome.text ?? "No matching results found in the knowledge base.",
+          refused: outcome.text === null,
+          sourceFilename: outcome.sourceFilename,
+          durationSeconds: outcome.durationSeconds,
+        };
+      } else {
+        const outcome = await runQuery(query, activeSession);
+        display = {
+          mode: "agentic",
+          trace: outcome.trace,
+          answer:
+            outcome.refused || !outcome.finalAnswer
+              ? "The system could not produce a grounded answer and refused to guess."
+              : outcome.finalAnswer,
+          refused: outcome.refused,
+          sourceFilename: null,
+          durationSeconds: outcome.durationSeconds,
+        };
+      }
+      setResult(display);
       appendHistory({
         question: query,
-        answer: outcome.refused || !outcome.finalAnswer ? "(refused)" : outcome.finalAnswer,
-        refused: outcome.refused,
+        answer: display.answer,
+        refused: display.refused,
+        mode: display.mode,
+        durationSeconds: display.durationSeconds,
       });
       setHistory(loadHistory());
     } catch (err) {
@@ -107,8 +160,9 @@ export function QueryPage() {
       </header>
 
       <p className="subtitle">
-        Runs the full Gatekeeper -&gt; Research -&gt; Writer -&gt; Verifier agent graph against
-        your own <code>enterprise-rag-platform</code> documents. <Link to="/about">What is this?</Link>
+        Compare a single raw retrieval pass against the full Gatekeeper -&gt; Research -&gt; Writer
+        -&gt; Verifier agent graph, both against your own <code>enterprise-rag-platform</code>{" "}
+        documents. <Link to="/about">What is this?</Link>
       </p>
 
       {expiryWarning && (
@@ -138,6 +192,30 @@ export function QueryPage() {
         )}
       </details>
 
+      <div className="mode-toggle" role="radiogroup" aria-label="Query mode">
+        <button
+          type="button"
+          className={mode === "agentic" ? "mode-button mode-button-active" : "mode-button"}
+          aria-pressed={mode === "agentic"}
+          onClick={() => setMode("agentic")}
+        >
+          Agentic RAG
+        </button>
+        <button
+          type="button"
+          className={mode === "direct" ? "mode-button mode-button-active" : "mode-button"}
+          aria-pressed={mode === "direct"}
+          onClick={() => setMode("direct")}
+        >
+          Direct RAG
+        </button>
+      </div>
+      <p className="subtitle">
+        {mode === "agentic"
+          ? "Full pipeline: routes, retrieves, drafts, and verifies before answering."
+          : "Baseline: one retrieval pass, the top result shown as-is, no synthesis or verification."}
+      </p>
+
       <form onSubmit={handleSubmit} className="query-form">
         <input
           type="text"
@@ -155,6 +233,12 @@ export function QueryPage() {
 
       {result && (
         <section className="result">
+          <div className="result-meta">
+            <span className="mode-badge">{result.mode === "agentic" ? "Agentic RAG" : "Direct RAG"}</span>
+            {result.durationSeconds !== null && (
+              <span className="duration-badge">{formatDuration(result.durationSeconds)}</span>
+            )}
+          </div>
           {result.trace.length > 0 && (
             <details open>
               <summary>Agent trace</summary>
@@ -167,11 +251,8 @@ export function QueryPage() {
               </ol>
             </details>
           )}
-          <p className="answer">
-            {result.refused || !result.finalAnswer
-              ? "The system could not produce a grounded answer and refused to guess."
-              : result.finalAnswer}
-          </p>
+          <p className="answer">{result.answer}</p>
+          {result.sourceFilename && <p className="subtitle">(source: {result.sourceFilename})</p>}
         </section>
       )}
 
@@ -197,7 +278,13 @@ export function QueryPage() {
           {history.map((entry) => (
             <li key={entry.id}>
               <div>
-                <strong>{entry.question}</strong>
+                <strong>{entry.question}</strong>{" "}
+                <span className="mode-badge mode-badge-small">
+                  {entry.mode === "direct" ? "Direct" : "Agentic"}
+                </span>
+                {entry.durationSeconds !== null && (
+                  <span className="subtitle"> · {formatDuration(entry.durationSeconds)}</span>
+                )}
                 <p className="subtitle">{entry.answer}</p>
                 <span className="subtitle">{new Date(entry.timestamp).toLocaleString()}</span>
               </div>

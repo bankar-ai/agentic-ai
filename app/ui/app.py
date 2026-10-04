@@ -14,6 +14,7 @@ exists.
 import gradio as gr
 import httpx
 
+from app.agents.direct_query import run_direct_query as _run_direct_query
 from app.agents.schemas import GraphState, UserSession
 from app.api.router import get_graph
 from app.core.config import get_settings
@@ -55,20 +56,23 @@ async def login(email: str, password: str) -> tuple[UserSession | None, str]:
 
 
 async def run_direct_query(query: str, user_session: UserSession | None = None) -> str:
-    """Direct-RAG tab: one retrieval pass, top chunk's text returned as-is, no synthesis."""
+    """Direct-RAG tab: one retrieval pass, top chunk's text returned as-is, no synthesis.
+
+    AGT-034: the actual retrieval logic now lives in `app.agents.direct_query`, shared with the
+    live `/query/direct` endpoint -- this wraps it with Gradio's own login/formatting concerns.
+    """
     if user_session is None:
         return _LOGIN_REQUIRED_MESSAGE
     client = _get_retrieval_client(user_session)
     try:
-        result = await client.search(query, top_k=1)
+        result = await _run_direct_query(client, query)
     except Exception as exc:
         if isinstance(exc, RagPlatformAuthError) or "401" in str(exc):
             return "Your session has expired -- please log in again."
         raise
-    if not result.results:
+    if result.text is None:
         return "No matching results found in the knowledge base."
-    top = result.results[0]
-    return f"{top.text}\n\n(source: {top.source_filename})"
+    return f"{result.text}\n\n(source: {result.source_filename})"
 
 
 async def run_agentic_query(query: str, user_session: UserSession | None = None):
