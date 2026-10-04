@@ -126,6 +126,14 @@ requests); `AGT-011` (2026-10-04) added `scripts/run_eval.py`, a 4-case regressi
 the real LLM, scoring to Langfuse when configured; `AGT-018` (2026-10-04) wired Grafana Cloud
 trace export in, reusing `enterprise-rag-platform`'s existing stack/token.
 
+**Usage/eval tracking separation decided (2026-10-04):** Langfuse gets its own dedicated
+`agentic-ai` project (separate keys, live-wired into Cloud Run, verified via the real API that
+real observations land there) — not shared with `enterprise-rag-platform`'s project. OpenRouter
+stays deliberately shared (the project owner's explicit call, not an oversight) — same account
+and key as `enterprise-rag-platform`, usage/billing mixed. Grafana Cloud isn't a separate
+"project" at all (that stack has no such concept) — `agentic-ai` is tagged with its own
+`OTEL_SERVICE_NAME` within the one shared stack (`AGT-018`).
+
 **One ticket genuinely paused, not forgotten:**
 - `AGT-019` (CI/CD for Cloud Run) — the deploy-on-merge GitHub Actions job is written and on
   `develop`, but needs the project owner's explicit go-ahead before creating the real GCP
