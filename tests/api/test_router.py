@@ -229,6 +229,45 @@ def test_query_endpoint_records_refused_outcome():
     mock_retry.assert_called_once_with(2)
 
 
+def test_documents_endpoint_requires_auth():
+    client = TestClient(app)
+    response = client.get("/documents")
+
+    assert response.status_code == 401
+
+
+def test_documents_endpoint_returns_documents_when_logged_in():
+    fake_result = {
+        "documents": [{"document_id": "d1", "filename": "geo.pdf", "created_at": "2026-10-01T12:00:00Z"}],
+        "has_more": False,
+    }
+
+    async def fake_list_documents(self, limit=50, offset=0):
+        from app.rag_client.documents import DocumentListResult
+
+        return DocumentListResult(**fake_result)
+
+    with patch("app.rag_client.documents.RagPlatformDocumentsClient.list_documents", fake_list_documents):
+        client = TestClient(app)
+        response = client.get("/documents", headers=_AUTH_HEADERS)
+
+    assert response.status_code == 200
+    assert response.json()["documents"][0]["filename"] == "geo.pdf"
+
+
+def test_documents_endpoint_surfaces_rag_platform_outage_as_502():
+    from app.rag_client.documents import RagPlatformDocumentsError
+
+    async def fake_list_documents(self, limit=50, offset=0):
+        raise RagPlatformDocumentsError("connection refused")
+
+    with patch("app.rag_client.documents.RagPlatformDocumentsClient.list_documents", fake_list_documents):
+        client = TestClient(app)
+        response = client.get("/documents", headers=_AUTH_HEADERS)
+
+    assert response.status_code == 502
+
+
 def test_query_endpoint_records_error_outcome_on_failure():
     fake_graph = _graph(raises=ValueError("internal detail"))
 

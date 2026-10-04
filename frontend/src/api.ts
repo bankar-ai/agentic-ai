@@ -84,3 +84,32 @@ export async function runQuery(query: string, session: LoginResult): Promise<Que
 
   return { trace, finalAnswer, refused };
 }
+
+export class DocumentsError extends Error {}
+
+export interface DocumentSummary {
+  documentId: string;
+  filename: string;
+  createdAt: string;
+}
+
+/** `GET /documents` (AGT-025): the caller's own successfully ingested `enterprise-rag-platform`
+ * documents -- read-only, no upload/delete here (that stays on that platform directly).
+ */
+export async function fetchDocuments(session: LoginResult): Promise<DocumentSummary[]> {
+  const response = await fetch(`${API_BASE_URL}/documents`, {
+    headers: {
+      Authorization: `Bearer ${session.accessToken}`,
+      "X-RAG-CSRF-Token": session.csrfToken,
+    },
+  });
+  if (!response.ok) {
+    throw new DocumentsError(`Could not load documents (${response.status}).`);
+  }
+  const body = await response.json();
+  return body.documents.map((doc: { document_id: string; filename: string; created_at: string }) => ({
+    documentId: doc.document_id,
+    filename: doc.filename,
+    createdAt: doc.created_at,
+  }));
+}

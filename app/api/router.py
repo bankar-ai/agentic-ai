@@ -19,8 +19,14 @@ from app.core.config import get_settings
 from app.core.query_metrics import record_query_outcome, record_retry_count
 from app.core.tracing import get_tracer
 from app.graph.build import build_graph
-from app.rag_client.auth import RagPlatformAuthError
+from app.rag_client.auth import RagPlatformAuthError, StaticTokenAuth
+from app.rag_client.documents import (
+    DocumentListResult,
+    RagPlatformDocumentsClient,
+    RagPlatformDocumentsError,
+)
 from app.rag_client.retrieval import RagPlatformRetrievalError
+from app.rag_client.shared_client import get_shared_rag_platform_client
 
 _BEARER_PREFIX = "Bearer "
 
@@ -132,6 +138,32 @@ async def health() -> dict[str, str]:
     probing it every 5 minutes costs nothing against either's quota.
     """
     return {"status": "ok"}
+
+
+@router.get("/documents")
+async def documents(
+    authorization: str | None = Header(default=None),
+    x_rag_csrf_token: str | None = Header(default=None),
+    limit: int = 50,
+    offset: int = 0,
+) -> DocumentListResult:
+    """List the caller's own successfully ingested `enterprise-rag-platform` documents (AGT-025)
+    -- lets them see what's actually in their knowledge base before asking a question. Read-only
+    proxy of that platform's own `GET /documents`; no upload/delete capability here.
+    """
+    user_session = extract_user_session(authorization, x_rag_csrf_token)
+    if user_session is None:
+        raise HTTPException(
+            status_code=401,
+            detail="Log in with your enterprise-rag-platform account (Authorization + X-RAG-CSRF-Token headers) to use this service.",
+        )
+    settings = get_settings()
+    auth = StaticTokenAuth(user_session.access_token, user_session.csrf_token)
+    client = RagPlatformDocumentsClient(settings.rag_platform_base_url, auth, get_shared_rag_platform_client())
+    try:
+        return await client.list_documents(limit=limit, offset=offset)
+    except (RagPlatformDocumentsError, RagPlatformAuthError) as exc:
+        raise HTTPException(status_code=502, detail=f"enterprise-rag-platform is unavailable: {exc}") from None
 
 
 @router.post("/query")

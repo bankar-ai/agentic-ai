@@ -134,3 +134,80 @@ details ol {
   color: #444;
   word-break: break-word;
 }
+
+.about-card {
+  max-width: 560px;
+  gap: 0.75rem;
+}
+
+.about-card ol {
+  margin: 0;
+  padding-left: 1.25rem;
+}
+
+.warning {
+  background: #fef3c7;
+  color: #92400e;
+  border-radius: 8px;
+  padding: 0.6rem 0.9rem;
+  font-size: 0.9rem;
+  margin: 0;
+}
+
+.documents-panel,
+.history-panel {
+  background: white;
+  border-radius: 12px;
+  padding: 0.75rem 1rem;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
+}
+
+.documents-panel summary,
+.history-panel summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.documents-list,
+.history-list {
+  list-style: none;
+  margin: 0.75rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.documents-list li {
+  font-size: 0.9rem;
+}
+
+.history-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.75rem;
+  border-top: 1px solid #eee;
+  padding-top: 0.5rem;
+}
+
+.history-list li:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+
+.history-list p.subtitle {
+  margin: 0.15rem 0;
+}
+
+.link-button {
+  background: none;
+  border: none;
+  color: #2563eb;
+  cursor: pointer;
+  font-size: 0.85rem;
+  padding: 0;
+  margin: 0;
+  text-decoration: underline;
+  flex-shrink: 0;
+}

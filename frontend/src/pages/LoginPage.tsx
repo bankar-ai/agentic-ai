@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { login, LoginError } from "../api";
 import { useSession } from "../session";
 
@@ -32,7 +32,8 @@ export function LoginPage() {
         <h1>Agentic RAG Orchestration</h1>
         <p className="subtitle">
           Log in with your own <code>enterprise-rag-platform</code> account. There is no shared
-          demo account -- every query runs against your own documents.
+          demo account -- every query runs against your own documents.{" "}
+          <Link to="/about">What is this?</Link>
         </p>
         <label htmlFor="email">Email</label>
         <input
