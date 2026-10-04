@@ -119,18 +119,24 @@ History belongs in `.ai/sessions/`, not here.
 Tracked as tickets in `.ai/tickets/` rather than duplicated here in full — this section is a quick
 index, read the ticket for detail.
 
-Every `AGT-*` ticket (`001`-`019`) is resolved — `AGT-019` as **Won't Do** (see below), everything
+Every `AGT-*` ticket (`001`-`020`) is resolved — `AGT-019` as **Won't Do** (see below), everything
 else **Done**. See each ticket for detail; `AGT-008`/`AGT-009`/`AGT-012` (2026-10-03/04) landed
 together with a real concurrency bug found and fixed along the way (`StaticTokenAuth` was unsafe
 to share across concurrent different-user requests); `AGT-011` (2026-10-04) added
 `scripts/run_eval.py`, a 4-case regression check against the real LLM, scoring to Langfuse;
-`AGT-018` (2026-10-04) wired Grafana Cloud trace export in, reusing `enterprise-rag-platform`'s
-existing stack/token — including a second real bug found *after* traces were already arriving:
-Cloud Run's own frontend injects a `traceparent` header into every request, so every span was a
-child of an un-exported parent in Google's internal tracing, showing `<root span not yet
-received>` on the dashboard. Fixed with a real no-op propagator (`CompositePropagator([])` looked
-right but is actually broken for zero propagators — crashed 12 unrelated tests before the actual
-fix was found).
+`AGT-018`/`AGT-020` (2026-10-04) wired full observability (traces, logs, metrics) into Grafana
+Cloud, reusing `enterprise-rag-platform`'s existing stack/token — three real bugs found and fixed
+along the way, not assumed away: (1) `HttpOTLPSpanExporter()`'s default timeout resolving to 0 on
+Cloud Run, fixed with an explicit `timeout=10`; (2) Cloud Run's own frontend injecting a
+`traceparent` header into every request, making every span a child of an un-exported parent in
+Google's internal tracing (`<root span not yet received>` on the dashboard) — fixed with a real
+no-op propagator (`CompositePropagator([])` looked right but is actually broken for zero
+propagators, returning `None` instead of a valid `Context` and crashing 12 unrelated tests before
+the real fix was found); (3) trace export broke *again* after adding logs/metrics, while those
+two worked immediately on the same redeploy — diagnosed as a payload-size-sensitive quirk
+(FastAPI's attribute-heavy spans are a bigger POST body than log lines or metric points), fixed
+by shrinking `BatchSpanProcessor`'s export batch size to 1. All three signals confirmed live via
+direct queries against Tempo/Loki/Prometheus, not inferred from an absence of errors.
 
 **Usage/eval tracking separation decided (2026-10-04):** Langfuse gets its own dedicated
 `agentic-ai` project (separate keys, live-wired into Cloud Run, verified via the real API that

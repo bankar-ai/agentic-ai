@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.auth import router as auth_router
 from app.api.router import router as query_router
 from app.core.cors import get_cors_settings
+from app.core.logging_config import configure_logging
 from app.core.telemetry import configure_telemetry
 from app.rag_client.shared_client import close_shared_rag_platform_client
 
@@ -33,3 +34,4 @@ app.add_middleware(
 app.include_router(query_router)
 app.include_router(auth_router)
 configure_telemetry(app)
+configure_logging()
