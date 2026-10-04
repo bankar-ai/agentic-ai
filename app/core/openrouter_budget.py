@@ -51,7 +51,9 @@ async def maybe_record_openrouter_budget(api_key: str) -> None:
     """
     global _last_checked_at
     now = time.monotonic()
+    logger.info("openrouter_budget: entered, now=%s last_checked_at=%s", now, _last_checked_at)
     if now - _last_checked_at < _CHECK_INTERVAL_SECONDS:
+        logger.info("openrouter_budget: throttled, skipping")
         return
     _last_checked_at = now
 
