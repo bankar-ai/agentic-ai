@@ -46,9 +46,12 @@ def _get_tokens_counter() -> Counter:
 def _get_cost_counter() -> Counter:
     global _cost_counter
     if _cost_counter is None:
+        # No `unit=` kwarg: the OTel-to-Prometheus bridge appends the unit to the metric name
+        # (found live -- `unit="USD"` turned this into `agentic_ai_llm_cost_usd_USD_total`,
+        # silently un-queryable under the name anyone would actually guess). The metric name
+        # already says "usd" in plain text, so the unit field would only ever be redundant here.
         _cost_counter = get_meter().create_counter(
             name="agentic_ai_llm_cost_usd_total",
-            unit="USD",
             description="Estimated USD cost of LLM calls, by agent/model (unpriced models record 0)",
         )
     return _cost_counter
