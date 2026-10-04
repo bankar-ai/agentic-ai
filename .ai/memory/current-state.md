@@ -119,12 +119,18 @@ History belongs in `.ai/sessions/`, not here.
 Tracked as tickets in `.ai/tickets/` rather than duplicated here in full — this section is a quick
 index, read the ticket for detail.
 
-Every `AGT-*` ticket except `AGT-019` (`001`-`018`) is Done. See each ticket for detail;
-`AGT-008`/`AGT-009`/`AGT-012` (2026-10-03/04) landed together with a real concurrency bug found
-and fixed along the way (`StaticTokenAuth` was unsafe to share across concurrent different-user
-requests); `AGT-011` (2026-10-04) added `scripts/run_eval.py`, a 4-case regression check against
-the real LLM, scoring to Langfuse when configured; `AGT-018` (2026-10-04) wired Grafana Cloud
-trace export in, reusing `enterprise-rag-platform`'s existing stack/token.
+Every `AGT-*` ticket (`001`-`019`) is resolved — `AGT-019` as **Won't Do** (see below), everything
+else **Done**. See each ticket for detail; `AGT-008`/`AGT-009`/`AGT-012` (2026-10-03/04) landed
+together with a real concurrency bug found and fixed along the way (`StaticTokenAuth` was unsafe
+to share across concurrent different-user requests); `AGT-011` (2026-10-04) added
+`scripts/run_eval.py`, a 4-case regression check against the real LLM, scoring to Langfuse;
+`AGT-018` (2026-10-04) wired Grafana Cloud trace export in, reusing `enterprise-rag-platform`'s
+existing stack/token — including a second real bug found *after* traces were already arriving:
+Cloud Run's own frontend injects a `traceparent` header into every request, so every span was a
+child of an un-exported parent in Google's internal tracing, showing `<root span not yet
+received>` on the dashboard. Fixed with a real no-op propagator (`CompositePropagator([])` looked
+right but is actually broken for zero propagators — crashed 12 unrelated tests before the actual
+fix was found).
 
 **Usage/eval tracking separation decided (2026-10-04):** Langfuse gets its own dedicated
 `agentic-ai` project (separate keys, live-wired into Cloud Run, verified via the real API that
@@ -134,16 +140,15 @@ and key as `enterprise-rag-platform`, usage/billing mixed. Grafana Cloud isn't a
 "project" at all (that stack has no such concept) — `agentic-ai` is tagged with its own
 `OTEL_SERVICE_NAME` within the one shared stack (`AGT-018`).
 
-**One ticket genuinely paused, not forgotten:**
-- `AGT-019` (CI/CD for Cloud Run) — the deploy-on-merge GitHub Actions job is written and on
-  `develop`, but needs the project owner's explicit go-ahead before creating the real GCP
-  Workload Identity Federation pool/provider/IAM binding it depends on. Not merged to `main` yet
-  (it would show as a failing check on every push until those exist).
+**`AGT-019` (CI/CD) decided: manual deploys only (2026-10-04).** The project owner's call after
+reviewing the draft — `gcloud run deploy` stays the process, matching `enterprise-rag-platform`'s
+own fully-manual deployment (SSH to the VM, `vercel deploy --prod` for its frontend). The drafted
+`deploy` job was removed from `.github/workflows/ci.yml`; CI is back to a pure test/lint gate, the
+same shape as `enterprise-rag-platform`'s own `ci.yml`. No GCP Workload Identity Federation
+resources were ever created.
 
 ## Next Planned Work
 
-- No blocking items remain in the original deployment chain. Anyone demoing this project live
-  needs their own `enterprise-rag-platform` account with real content already ingested on it —
-  that's now the demo's precondition, not something `agentic-ai` provisions for them.
-- `AGT-019`: decide whether to set up Workload Identity Federation for CI/CD (see above) — the
-  only remaining open item in the whole ticket backlog.
+Nothing open. Anyone demoing this project live needs their own `enterprise-rag-platform` account
+with real content already ingested on it — that's the demo's only precondition, and it's a
+per-demo setup step, not a standing gap in the project itself.

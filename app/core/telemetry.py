@@ -14,6 +14,7 @@ import os
 
 from fastapi import FastAPI
 from opentelemetry import trace
+from opentelemetry.context import Context
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
     OTLPSpanExporter as GrpcOTLPSpanExporter,
 )
@@ -22,10 +23,39 @@ from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
 )
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+from opentelemetry.propagate import set_global_textmap
+from opentelemetry.propagators.textmap import (
+    CarrierT,
+    Getter,
+    Setter,
+    TextMapPropagator,
+    default_getter,
+    default_setter,
+)
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExporter
 
 logger = logging.getLogger(__name__)
+
+
+class _NoExtractPropagator(TextMapPropagator):
+    """A real no-op propagator: ignores any inbound trace-context header entirely and injects
+    nothing. `CompositePropagator([])` looks like the obvious way to express "ignore everything",
+    but is actually broken for this -- with zero propagators to run, its `extract()` returns
+    whatever `context` it was passed (`None` from FastAPI's ASGI middleware), not a valid
+    `Context`, which crashes every later `context.get(...)` call. This class returns a real,
+    valid `Context` instead.
+    """
+
+    def extract(self, carrier: CarrierT, context: Context | None = None, getter: Getter[CarrierT] = default_getter) -> Context:
+        return context if context is not None else Context()
+
+    def inject(self, carrier: CarrierT, context: Context | None = None, setter: Setter[CarrierT] = default_setter) -> None:
+        return None
+
+    @property
+    def fields(self) -> set[str]:
+        return set()
 
 
 def _build_span_exporter() -> SpanExporter:
@@ -56,6 +86,15 @@ def configure_telemetry(app: FastAPI) -> None:
     swallowed so the app still starts and serves requests normally either way.
     """
     try:
+        # Found live on Cloud Run (2026-10-04): Google's Cloud Run frontend (GFE) injects its
+        # own `traceparent` header into every proxied request. OTel's default propagator
+        # extracts that and makes every server span a *child* of a parent that lives only in
+        # Google's internal Cloud Trace system -- never exported to us -- so Tempo waits
+        # forever for a root span that will never arrive ("<root span not yet received>",
+        # blank service/no data on the dashboard). An empty propagator ignores any inbound
+        # trace context entirely, so every request starts its own real root span instead.
+        set_global_textmap(_NoExtractPropagator())
+
         tracer_provider = TracerProvider()
         tracer_provider.add_span_processor(BatchSpanProcessor(_build_span_exporter()))
         trace.set_tracer_provider(tracer_provider)

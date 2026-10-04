@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from opentelemetry.propagate import get_global_textmap
 
 from app.core.telemetry import _build_span_exporter, configure_telemetry
 
@@ -33,3 +34,13 @@ def test_configure_telemetry_never_raises_even_if_instrumentation_fails(monkeypa
     monkeypatch.setattr("app.core.telemetry._build_span_exporter", _boom)
 
     configure_telemetry(FastAPI())  # must not raise
+
+
+def test_configure_telemetry_ignores_inbound_trace_context():
+    """Cloud Run's own frontend injects a `traceparent` header into every proxied request;
+    extracting it makes our spans children of a parent that lives only in Google's internal
+    Cloud Trace, never exported to us -- Tempo then waits forever for a root span that never
+    arrives. Every request must start its own fresh root span instead (found live, 2026-10-04)."""
+    configure_telemetry(FastAPI())
+
+    assert get_global_textmap().fields == set()
