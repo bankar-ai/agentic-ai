@@ -188,6 +188,26 @@ History belongs in `.ai/sessions/`, not here.
   then completed end-to-end for the first time this project's life: all four node spans, the
   `completed` outcome, and the verifier-retry metric all confirmed live with real data, and the
   answer itself was correctly grounded and cited.
+- **Indirect-prompt-injection guardrails added (`AGT-029`, 2026-10-04)**: proactive security audit
+  (researched OWASP LLM Top 10, MCP/RAG injection literature) found two real gaps, both fixed --
+  new `app/agents/sanitize.py` strips HTML/control/invisible-unicode characters from retrieved
+  KB/web content before it reaches a prompt, and the Gatekeeper/Writer/Verifier system prompts now
+  explicitly frame retrieved content as untrusted data, not instructions. Live-verified no
+  regression in answer quality or citations.
+- **LLM token/cost consumption metrics added (`AGT-030`, 2026-10-04)**: new
+  `agentic_ai_llm_tokens_total`/`agentic_ai_llm_cost_usd_total` counters plus dashboard panels, so
+  `agentic-ai`'s own OpenRouter spend is now visible and comparable against
+  `enterprise-rag-platform`'s (checked directly against each project's own API key). Found and
+  fixed a real bug along the way: the cost counter's `unit="USD"` kwarg got silently renamed by
+  the OTel-to-Prometheus export bridge into an unqueryable metric name -- root-caused via the full
+  metric catalog, not assumed as export lag. Live-verified after the fix with real per-agent cost
+  data.
+- **Recurring quirk, every fresh deploy this session**: a new Cloud Run revision's first 1-3
+  query attempts hit OpenRouter `429`s for roughly 1-3 minutes before succeeding -- confirmed each
+  time it's NOT a budget/quota issue (isolated calls work fine in the same window); not fully
+  root-caused, likely `FallbackModel` + structured-output retries amplifying one logical call into
+  several rapid requests against a cold connection pool. Expect this after every redeploy; it
+  clears on its own.
 
 ## Known Gaps / Follow-ups
 
