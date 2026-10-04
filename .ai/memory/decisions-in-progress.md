@@ -5,25 +5,29 @@ Once a decision is made, remove it from here and write it up in `.ai/adr/`.
 
 ## Open
 
-- **ERP-112 sequencing**: whether `enterprise-rag-platform`'s Langfuse integration ticket
-  (currently Backlog) is completed before this project's evaluation milestone, or whether this
-  project stands up the shared Langfuse account itself if ERP-112 is still pending. This project's
-  own Langfuse tracer (`app/core/tracing.py`, built in implementation) already degrades gracefully
-  to a no-op when credentials are absent, so this is no longer a blocker on anything — it's purely
-  about whether the two projects end up sharing one Langfuse Cloud account or each stand up their
-  own. See `AGT-011`.
+None currently.
+
 ## Resolved
+
+- **ERP-112 sequencing** (2026-10-04, `AGT-011`): resolved by the project owner creating a
+  dedicated `agentic-ai` project in the same Langfuse account/org as `enterprise-rag-platform`'s
+  own, with its own key pair — not waiting on `ERP-112`, and not sharing a single project either.
+  Live-verified that real observations land scoped to `agentic-ai` only.
 
 - **Whether anonymous visitors get a shared demo account** (2026-10-01, `AGT-006`): no. The
   project owner rejected ingesting demo content under a shared service account; there is no
   anonymous path at all now, so this also makes "what content to ingest for the demo" moot — every
   caller demos against their own already-ingested `enterprise-rag-platform` content.
 
-- **OpenRouter account and model choice** (2026-10-01, `AGT-004`): reuse
-  `enterprise-rag-platform`'s existing funded OpenRouter API key rather than a separate
-  account/Workspace (Workspace creation is dashboard-only, no unattended API — not worth blocking
-  on). Model: `nvidia/nemotron-3-nano-30b-a3b:free` primary, `nvidia/nemotron-3.5-lightning:free`
-  fallback. Live-verified 3/3 successful on the Writer task that was flaky under local models.
+- **OpenRouter account and model choice** (2026-10-01, `AGT-004`; key ownership revised
+  2026-10-04): originally reused `enterprise-rag-platform`'s existing funded OpenRouter API key
+  rather than a separate account/Workspace (Workspace creation is dashboard-only, no unattended
+  API — not worth blocking on). **2026-10-04**: project owner generated `agentic-ai` its own
+  dedicated key in that same workspace (separates usage/cost attribution; does NOT grant a
+  separate free-model daily quota — that cap is workspace-scoped, confirmed live). Model:
+  `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free` primary (corrected 2026-10-04, `AGT-021`
+  — the original slug had drifted to one that no longer exists), `nvidia/nemotron-3.5-lightning:free`
+  fallback.
 - **Hosting target for this project's own service** (2026-10-01, `AGT-005`): Cloud Run, decided by
   the project owner — zero free-tier cost, isolated from `rag-platform-host`'s thin resource
   budget. Live at `https://agentic-ai-167676028188.us-central1.run.app`.
