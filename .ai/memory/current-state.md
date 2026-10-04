@@ -113,6 +113,26 @@ History belongs in `.ai/sessions/`, not here.
   frontend) was failing every retrieval call with `403 Missing or invalid CSRF token`. Fixed in
   `app/rag_client/auth.py`; live-verified end-to-end afterward (login -> `/query` ->
   `web_fallback` -> grounded answer) from the actual deployed Vercel origin.
+- **Per-node/MCP/LLM latency instrumentation added (`AGT-021`, 2026-10-04):** OTel spans around
+  each graph node (`app/graph/build.py`) and the MCP tool call (`app/agents/research.py`), plus a
+  new `llm_generation_duration_seconds` histogram (`app/core/llm_metrics.py`) around each
+  PydanticAI `agent.run()` call. Deployed as `agentic-ai-00014-n5c`. Live verification found and
+  fixed a real bug along the way: `OPENROUTER_MODEL` had drifted to an invalid slug
+  (`nvidia/nemotron-3-nano-30b-a3b:free`, 404 on every call) -- corrected to
+  `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free`, redeployed as `agentic-ai-00015-bfs`.
+  Verification is **partial**: `gatekeeper_node`s span and the new metric are confirmed live
+  (including recording correctly on failure), but `research_node`/`writer_node`/`verifier_node`/
+  the MCP span could not be exercised this session -- the shared OpenRouter key's *daily*
+  free-model quota was already exhausted by the time of the last attempt (confirmed directly
+  against OpenRouter's own `/api/v1/auth/key`, not inferred). See `AGT-021`s Resolution notes.
+- **Grafana dashboards split into one per project, for real this time (`AGT-021`, 2026-10-04):**
+  after trying (and reverting) a shared single-dashboard picker and a `conditionalRendering`
+  per-panel approach earlier the same day, the project owner asked directly whether fully separate
+  project-specific dashboards were possible -- yes, and simpler. `pav87rr` repurposed into
+  `self-hosted-rag-platform -- Service Observability` (same uid/URL, hardcoded, no picker); a new
+  `agentic-ai -- Service Observability` (`uid arxchd`) created with the cross-project panels plus
+  AGT-021's new per-node/MCP/LLM-duration panels. Both live-verified via the render API (actual
+  screenshots showing real data, not just that the dashboard JSON was accepted).
 
 ## Known Gaps / Follow-ups
 
