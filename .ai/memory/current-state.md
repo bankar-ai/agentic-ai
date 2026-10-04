@@ -221,14 +221,25 @@ History belongs in `.ai/sessions/`, not here.
   backends (Google, Mojeek, Brave) rejecting requests outright (403/429), consistent with
   cloud-provider IP fingerprinting. The system's own refusal-on-zero-evidence behavior is correct;
   the open question is how often this happens and whether it's worth mitigating.
+- **Direct vs Agentic comparison, verifier reasoning, response time all shipped (`AGT-034`/
+  `035`/`036`, 2026-10-04)**: new `POST /query/direct` (one retrieval pass, no synthesis, shared
+  logic with the Gradio demo) plus a frontend mode toggle; `verifier_node` now traces its real
+  `reasoning`/`unsupported_claims` instead of discarding them (a real rejection was previously
+  completely undebuggable); both query endpoints report server-measured `duration_seconds`,
+  shown in the UI and tracked as a new dashboard metric. **First live test of any of this against
+  the project owner's own real account** (6 documents, not the empty test account used all
+  session): confirmed real content, a real `kb`-route trace, and -- thanks to `AGT-035` -- full
+  visibility into exactly why the Verifier rejected two drafts in a row (a genuinely subtle
+  "recommends X" vs. "already does X" distinction, not something `grounded: false` alone could
+  ever have shown).
 
 ## Known Gaps / Follow-ups
 
 Tracked as tickets in `.ai/tickets/` rather than duplicated here in full — this section is a quick
 index, read the ticket for detail.
 
-Every `AGT-*` ticket (`001`-`032`) is resolved — `AGT-019` as **Won't Do** (see below), everything
-else **Done**. See each ticket for detail; `AGT-008`/`AGT-009`/`AGT-012` (2026-10-03/04) landed
+Every `AGT-*` ticket (`001`-`036`) is resolved except `AGT-033` (Backlog, see below) — `AGT-019` is
+**Won't Do** (see below), everything else **Done**. See each ticket for detail; `AGT-008`/`AGT-009`/`AGT-012` (2026-10-03/04) landed
 together with a real concurrency bug found and fixed along the way (`StaticTokenAuth` was unsafe
 to share across concurrent different-user requests); `AGT-011` (2026-10-04) added
 `scripts/run_eval.py`, a 4-case regression check against the real LLM, scoring to Langfuse;
