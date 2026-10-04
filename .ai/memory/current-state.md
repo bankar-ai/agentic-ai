@@ -152,7 +152,8 @@ History belongs in `.ai/sessions/`, not here.
   `GET /documents` (proxies `enterprise-rag-platform`'s own `GET /documents`/ERP-103) lets a
   user see what's in their knowledge base before asking. Frontend gained an `/about` page, a
   documents panel, client-side-only `localStorage` query history (no new backend dependency --
-  deliberate scope call, `agentic-ai` has no database of its own), and a session-expiry warning
+  deliberate scope call, `agentic-ai` had no database of its own at the time; superseded by
+  `AGT-041`, see below), and a session-expiry warning
   + draft-query preservation on forced logout. Deployed as `agentic-ai-00021-pmn`. **Real
   limitation found investigating true silent session refresh (`AGT-026`)**: can't be done without
   a real architecture change -- `StaticTokenAuth` deliberately has no password and can't refresh
@@ -238,13 +239,43 @@ History belongs in `.ai/sessions/`, not here.
   `mode="agentic"` and `mode="direct"` in Prometheus, and rendered the dashboard's duration panel
   (`arxchd`, panel 141) showing real p50/p95 lines for the first time (earlier same-day check
   had only one sample, too few for `rate()` to plot).
+- **Query page visual redesign + first real database (`AGT-037`-`044`, 2026-10-04/05)**: live
+  screenshot review found the deployed query page read as unstyled (flat gray page, floating pill
+  buttons, raw-JSON trace). Tailwind CSS added (matching `enterprise-rag-platform`'s conventions);
+  proper app header with underline tabs (`AGT-037`); documents panel restyled with a
+  stale-while-revalidate client cache so refresh never flashes empty (`AGT-038`); agent trace now
+  a collapsible stepper with a prominent Grounded/Refused verdict badge instead of
+  `JSON.stringify` (`AGT-039`); history entries clickable to reopen their full stored
+  result/trace, capped at 5 shown (`AGT-040`); mobile-responsive header (`AGT-042`, with the
+  off-canvas-sidebar acceptance criterion scope-adjusted -- this page never had a persistent
+  sidebar to collapse, unlike `enterprise-rag-platform`'s three-pane chat layout).
+  **`agentic-ai` gained its first database** (`AGT-041`): a dedicated Neon Postgres project (not
+  shared with `enterprise-rag-platform`'s own), one `query_history` table serving double duty as
+  a 24h query-result cache (same question from the same user/mode returns the stored answer
+  instantly -- live-verified 47.97s -> 0.0s for a real agentic query, 1.44s -> 0.0s for direct)
+  and a durable audit log (insert on every hit or miss, confirmed via direct query against the
+  live table). `GET /history` (`AGT-044` part 2) lets the frontend reconcile against this table on
+  mount, giving genuine cross-device history sync -- live-verified as a real multi-client test
+  (one `curl` client's queries retrievable via a second, independent `GET /history` call).
+  Same-tab cross-tab sync (`AGT-044` part 1, a `storage`-event listener) shipped alongside the
+  redesign. Also found and fixed a real bug while answering "is the Verifier doing its job
+  properly?" (`AGT-043`): `VerificationResult`'s field order put the verdict fields before
+  `reasoning`, so a structured-output model could lock in `unsupported_claims` before writing the
+  reasoning meant to justify it -- confirmed live as a genuine self-contradiction (reasoning
+  affirmed a claim was grounded, the same claim was still flagged unsupported). Fixed by
+  reordering fields (`reasoning` first) and reinforcing it in the prompt; not independently
+  re-verified against a fresh live contradiction (scope-adjusted, see `AGT-043`'s resolution).
+  Several items honestly flagged as **not** physically verified in a real browser (no
+  screenshot/automation tool this session): click-to-reopen, mobile-width rendering, and
+  same-tab live sync are confirmed by code review and build output, not an actual click or a real
+  device -- worth the project owner's own click-through to fully close out.
 
 ## Known Gaps / Follow-ups
 
 Tracked as tickets in `.ai/tickets/` rather than duplicated here in full — this section is a quick
 index, read the ticket for detail.
 
-Every `AGT-*` ticket (`001`-`036`) is resolved except `AGT-033` (Backlog, see below) — `AGT-019` is
+Every `AGT-*` ticket (`001`-`044`) is resolved except `AGT-033` (Backlog, see below) — `AGT-019` is
 **Won't Do** (see below), everything else **Done**. See each ticket for detail; `AGT-008`/`AGT-009`/`AGT-012` (2026-10-03/04) landed
 together with a real concurrency bug found and fixed along the way (`StaticTokenAuth` was unsafe
 to share across concurrent different-user requests); `AGT-011` (2026-10-04) added
