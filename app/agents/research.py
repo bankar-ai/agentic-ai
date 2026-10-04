@@ -30,6 +30,7 @@ from fastmcp.exceptions import ToolError
 from mcp.shared.exceptions import MCPError
 from pydantic_ai.mcp import MCPToolset, StdioTransport
 
+from app.agents.sanitize import sanitize_evidence_text
 from app.agents.schemas import Evidence, GatekeeperDecision, ResearchResult, UserSession
 from app.agents.web_search import search_web
 from app.core.telemetry import get_tracer
@@ -94,7 +95,12 @@ async def _research_kb(
         raise KnowledgeBaseUnavailable(f"The knowledge base tool call failed: {exc}") from exc
     if not isinstance(raw, list):
         raise KnowledgeBaseToolError(f"{_KB_TOOL_NAME} returned {type(raw).__name__}, expected a list of chunks")
-    return [Evidence(text=chunk["text"], source="knowledge_base", citation=chunk["source_filename"]) for chunk in raw]
+    # AGT-029: KB content was ingested by some user, not necessarily this one -- sanitize it the
+    # same as web content before it reaches a prompt, same reasoning as search_web()'s own pass.
+    return [
+        Evidence(text=sanitize_evidence_text(chunk["text"]), source="knowledge_base", citation=chunk["source_filename"])
+        for chunk in raw
+    ]
 
 
 async def research(
