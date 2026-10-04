@@ -211,3 +211,55 @@ details ol {
   text-decoration: underline;
   flex-shrink: 0;
 }
+
+.mode-toggle {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.mode-button {
+  margin-top: 0;
+  background: #e5e7eb;
+  color: #1a1a1a;
+  width: auto;
+  padding: 0.5rem 1rem;
+  border-radius: 999px;
+  font-size: 0.9rem;
+}
+
+.mode-button-active {
+  background: #2563eb;
+  color: white;
+}
+
+.result-meta {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.mode-badge {
+  display: inline-block;
+  background: #e5e7eb;
+  color: #374151;
+  border-radius: 999px;
+  padding: 0.15rem 0.6rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.mode-badge-small {
+  font-size: 0.7rem;
+  padding: 0.1rem 0.5rem;
+}
+
+.duration-badge {
+  display: inline-block;
+  background: #dbeafe;
+  color: #1e40af;
+  border-radius: 999px;
+  padding: 0.15rem 0.6rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+}

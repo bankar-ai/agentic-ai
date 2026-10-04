@@ -14,6 +14,11 @@ export interface HistoryEntry {
   answer: string;
   refused: boolean;
   timestamp: number;
+  /** AGT-034/036: which mode produced this entry, and how long it took -- lets the history panel
+   * itself double as a Direct-vs-Agentic comparison view. `durationSeconds` is server-reported,
+   * not a client-side timer. */
+  mode: "agentic" | "direct";
+  durationSeconds: number | null;
 }
 
 export function loadHistory(): HistoryEntry[] {

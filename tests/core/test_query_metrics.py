@@ -2,12 +2,17 @@ from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 
 from app.core import query_metrics
-from app.core.query_metrics import record_query_outcome, record_retry_count
+from app.core.query_metrics import (
+    record_query_duration,
+    record_query_outcome,
+    record_retry_count,
+)
 
 
 def _reset():
     query_metrics._outcome_counter = None
     query_metrics._retry_histogram = None
+    query_metrics._duration_histogram = None
 
 
 def _metrics(reader: InMemoryMetricReader, name: str) -> list:
@@ -52,4 +57,22 @@ def test_record_retry_count_records_a_sample(monkeypatch):
     assert len(points) == 1
     assert points[0].count == 1
     assert points[0].sum == 2
+    _reset()
+
+
+def test_record_query_duration_records_a_labeled_sample(monkeypatch):
+    _reset()
+    reader = InMemoryMetricReader()
+    provider = MeterProvider(metric_readers=[reader])
+    monkeypatch.setattr(query_metrics, "get_meter", lambda: provider.get_meter("test"))
+
+    record_query_duration("completed", "agentic", 1.5)
+
+    histograms = _metrics(reader, "agentic_ai_query_duration_seconds")
+    assert len(histograms) == 1
+    points = list(histograms[0].data.data_points)
+    assert len(points) == 1
+    assert points[0].sum == 1.5
+    assert points[0].attributes["outcome"] == "completed"
+    assert points[0].attributes["mode"] == "agentic"
     _reset()

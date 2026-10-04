@@ -57,6 +57,26 @@ async def test_verifier_node_checks_draft_against_retrieved_evidence():
 
 
 @pytest.mark.asyncio
+async def test_verifier_node_traces_reasoning_and_unsupported_claims():
+    """AGT-035: a rejection must be debuggable from the trace, not just `grounded: false`."""
+    verification = VerificationResult(
+        grounded=False, unsupported_claims=["falls are the leading cause..."], reasoning="not supported by evidence"
+    )
+    with (
+        patch("app.graph.build.grade_retrieval", AsyncMock(return_value=GatekeeperDecision(route="kb", reasoning="ok"))),
+        patch("app.graph.build.research", AsyncMock(return_value=AsyncMock(evidence=KB_EVIDENCE))),
+        patch("app.graph.build.write_answer", AsyncMock(return_value=DraftAnswer(text="Paris [geo.pdf]", cited_evidence=KB_EVIDENCE))),
+        patch("app.graph.build.verify_answer", AsyncMock(return_value=verification)),
+    ):
+        graph = build_graph(model=MagicMock(), retrieval_client=MagicMock(), mcp_server_command=[], max_retries=1)
+        final_state = await graph.ainvoke(_initial_state("What is the capital of France?"))
+
+    verifier_steps = [step for step in final_state["trace"] if step["agent"] == "verifier"]
+    assert verifier_steps[0]["reasoning"] == "not supported by evidence"
+    assert verifier_steps[0]["unsupported_claims"] == ["falls are the leading cause..."]
+
+
+@pytest.mark.asyncio
 async def test_graph_refuses_after_exhausting_retries():
     ungrounded = VerificationResult(grounded=False, unsupported_claims=["made up fact"], reasoning="not supported")
     with (

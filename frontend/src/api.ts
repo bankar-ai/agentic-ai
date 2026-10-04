@@ -37,6 +37,7 @@ export interface QueryResult {
   trace: TraceStep[];
   finalAnswer: string | null;
   refused: boolean;
+  durationSeconds: number | null;
 }
 
 /** `POST /query`: runs the agent graph and returns its full trace + result, delivered as one
@@ -64,6 +65,7 @@ export async function runQuery(query: string, session: LoginResult): Promise<Que
   const trace: TraceStep[] = [];
   let finalAnswer: string | null = null;
   let refused = false;
+  let durationSeconds: number | null = null;
 
   for (const block of text.split("\n\n")) {
     if (!block.trim()) continue;
@@ -77,12 +79,46 @@ export async function runQuery(query: string, session: LoginResult): Promise<Que
     } else if (event === "result") {
       finalAnswer = data.final_answer;
       refused = data.refused;
+      durationSeconds = data.duration_seconds ?? null;
     } else if (event === "error") {
       throw new QueryError(data.message ?? "Query failed.");
     }
   }
 
-  return { trace, finalAnswer, refused };
+  return { trace, finalAnswer, refused, durationSeconds };
+}
+
+/** `POST /query/direct` (AGT-034): one retrieval pass, top chunk returned as-is, no synthesis --
+ * the baseline the full agentic pipeline is compared against.
+ */
+export interface DirectQueryResult {
+  text: string | null;
+  sourceFilename: string | null;
+  durationSeconds: number | null;
+}
+
+export async function runDirectQuery(query: string, session: LoginResult): Promise<DirectQueryResult> {
+  const response = await fetch(`${API_BASE_URL}/query/direct`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${session.accessToken}`,
+      "X-RAG-CSRF-Token": session.csrfToken,
+    },
+    body: JSON.stringify({ query }),
+  });
+  if (response.status === 401) {
+    throw new QueryError("Your session has expired -- please log in again.");
+  }
+  if (!response.ok) {
+    throw new QueryError(`Query failed (${response.status}).`);
+  }
+  const body = await response.json();
+  return {
+    text: body.text ?? null,
+    sourceFilename: body.source_filename ?? null,
+    durationSeconds: body.duration_seconds ?? null,
+  };
 }
 
 export class DocumentsError extends Error {}

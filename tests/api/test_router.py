@@ -54,6 +54,7 @@ def test_query_endpoint_streams_steps_and_result():
     assert response.text.count("event: step") == 2
     assert "event: result" in response.text
     assert "Paris" in response.text
+    assert '"duration_seconds"' in response.text
 
 
 def test_query_endpoint_surfaces_rag_platform_outage_as_error_event():
@@ -227,6 +228,41 @@ def test_query_endpoint_records_refused_outcome():
 
     mock_outcome.assert_called_once_with("refused")
     mock_retry.assert_called_once_with(2)
+
+
+def test_query_direct_endpoint_requires_auth():
+    client = TestClient(app)
+    response = client.post("/query/direct", json={"query": "What is the capital of France?"})
+
+    assert response.status_code == 401
+
+
+def test_query_direct_endpoint_returns_the_top_chunk_and_duration():
+    from app.agents.direct_query import DirectQueryResult
+
+    async def fake_run_direct_query(client, query):
+        return DirectQueryResult(text="Paris is the capital of France.", source_filename="geo.pdf")
+
+    with patch("app.api.router.run_direct_query", fake_run_direct_query):
+        client = TestClient(app)
+        response = client.post("/query/direct", json={"query": "What is the capital of France?"}, headers=_AUTH_HEADERS)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["text"] == "Paris is the capital of France."
+    assert body["source_filename"] == "geo.pdf"
+    assert isinstance(body["duration_seconds"], float)
+
+
+def test_query_direct_endpoint_surfaces_rag_platform_outage_as_502():
+    async def fake_run_direct_query(client, query):
+        raise RagPlatformRetrievalError("connection refused")
+
+    with patch("app.api.router.run_direct_query", fake_run_direct_query):
+        client = TestClient(app)
+        response = client.post("/query/direct", json={"query": "What is the capital of France?"}, headers=_AUTH_HEADERS)
+
+    assert response.status_code == 502
 
 
 def test_documents_endpoint_requires_auth():
