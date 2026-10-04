@@ -132,8 +132,17 @@ def configure_telemetry(app: FastAPI) -> None:
         )
         trace.set_tracer_provider(tracer_provider)
 
+        # export_timeout_millis explicit, same defensive reasoning as the span processor above.
+        # Unlike BatchSpanProcessor, PeriodicExportingMetricReader has no batch-size knob -- it
+        # exports every current series each interval, not in configurable chunks -- so the fix
+        # that resolved trace export flakiness has no direct equivalent here. Metric export
+        # failures with the same "read timeout=0" signature were observed live even with this;
+        # treated as the same known Cloud Run sandbox flakiness already documented for traces,
+        # not something this change claims to eliminate.
         meter_provider = MeterProvider(
-            metric_readers=[PeriodicExportingMetricReader(_build_metric_exporter())]
+            metric_readers=[
+                PeriodicExportingMetricReader(_build_metric_exporter(), export_timeout_millis=30000)
+            ]
         )
         metrics.set_meter_provider(meter_provider)
 
