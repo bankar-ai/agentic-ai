@@ -178,3 +178,67 @@ def test_query_endpoint_does_not_call_get_graph_when_not_logged_in():
         client.post("/query", json={"query": "What is the capital of France?"})
 
     mock_get_graph.assert_not_called()
+
+
+def test_health_endpoint_requires_no_auth_and_returns_ok():
+    """AGT-022: the Synthetic Monitoring probe target must work with no headers at all."""
+    client = TestClient(app)
+    response = client.get("/health")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+
+
+def test_query_endpoint_records_completed_outcome():
+    fake_graph = _graph([{
+        "verifier": {
+            "final_answer": "Paris", "refused": False, "retry_count": 0,
+            "trace": [{"agent": "verifier", "grounded": True}],
+        }
+    }])
+
+    with (
+        patch("app.api.router.get_graph", return_value=fake_graph),
+        patch("app.api.router.record_query_outcome") as mock_outcome,
+        patch("app.api.router.record_retry_count") as mock_retry,
+    ):
+        client = TestClient(app)
+        client.post("/query", json={"query": "What is the capital of France?"}, headers=_AUTH_HEADERS)
+
+    mock_outcome.assert_called_once_with("completed")
+    mock_retry.assert_called_once_with(0)
+
+
+def test_query_endpoint_records_refused_outcome():
+    fake_graph = _graph([{
+        "verifier": {
+            "final_answer": None, "refused": True, "retry_count": 2,
+            "trace": [{"agent": "verifier", "grounded": False}],
+        }
+    }])
+
+    with (
+        patch("app.api.router.get_graph", return_value=fake_graph),
+        patch("app.api.router.record_query_outcome") as mock_outcome,
+        patch("app.api.router.record_retry_count") as mock_retry,
+    ):
+        client = TestClient(app)
+        client.post("/query", json={"query": "What is the capital of France?"}, headers=_AUTH_HEADERS)
+
+    mock_outcome.assert_called_once_with("refused")
+    mock_retry.assert_called_once_with(2)
+
+
+def test_query_endpoint_records_error_outcome_on_failure():
+    fake_graph = _graph(raises=ValueError("internal detail"))
+
+    with (
+        patch("app.api.router.get_graph", return_value=fake_graph),
+        patch("app.api.router.record_query_outcome") as mock_outcome,
+        patch("app.api.router.record_retry_count") as mock_retry,
+    ):
+        client = TestClient(app)
+        client.post("/query", json={"query": "What is the capital of France?"}, headers=_AUTH_HEADERS)
+
+    mock_outcome.assert_called_once_with("error")
+    mock_retry.assert_not_called()

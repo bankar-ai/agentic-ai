@@ -16,6 +16,7 @@ from app.agents.research import KnowledgeBaseUnavailable
 from app.agents.schemas import GraphState, UserSession
 from app.api.schemas import QueryRequest
 from app.core.config import get_settings
+from app.core.query_metrics import record_query_outcome, record_retry_count
 from app.core.tracing import get_tracer
 from app.graph.build import build_graph
 from app.rag_client.auth import RagPlatformAuthError
@@ -97,6 +98,7 @@ async def _event_stream(
     except (RagPlatformRetrievalError, RagPlatformAuthError) as exc:
         # Upstream response bodies stay in the server log, not in the client-facing message.
         logger.exception("RAG platform unavailable while answering query")
+        record_query_outcome("error")
         yield _format_sse("error", {
             "type": type(exc).__name__,
             "message": "The knowledge base (enterprise-rag-platform) is unavailable or rejected authentication.",
@@ -106,6 +108,7 @@ async def _event_stream(
         # AGT-012: the MCP subprocess's own ToolError/MCPError, mapped to a legible type/message
         # instead of leaking "ToolError" (or similar) straight to the client.
         logger.exception("Knowledge-base MCP tool call failed while answering query")
+        record_query_outcome("error")
         yield _format_sse("error", {
             "type": "KnowledgeBaseUnavailable",
             "message": "The knowledge base is temporarily unavailable. Please try again shortly.",
@@ -114,9 +117,21 @@ async def _event_stream(
     except Exception as exc:
         # Unexpected failures: report the type only; details stay in the server log.
         logger.exception("Agent graph failed while answering query")
+        record_query_outcome("error")
         yield _format_sse("error", {"type": type(exc).__name__, "message": "Query failed; see server logs for details."})
         return
+    record_query_outcome("refused" if final_state["refused"] else "completed")
+    record_retry_count(final_state.get("retry_count", 0))
     yield _format_sse("result", {"final_answer": final_state["final_answer"], "refused": final_state["refused"]})
+
+
+@router.get("/health")
+async def health() -> dict[str, str]:
+    """Liveness check for Grafana Cloud Synthetic Monitoring (AGT-022) -- deliberately does
+    nothing but confirm the process is up: no auth, no LLM call, no RAG-platform round trip, so
+    probing it every 5 minutes costs nothing against either's quota.
+    """
+    return {"status": "ok"}
 
 
 @router.post("/query")
