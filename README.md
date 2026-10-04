@@ -106,4 +106,17 @@ uv run ruff check app tests
 uv run mypy app
 ```
 
+## Evaluation
+
+```bash
+uv run python scripts/run_eval.py
+```
+
+A small hand-built Q&A regression check (known-correct + known-should-refuse cases) against the
+*real* configured LLM provider -- needs real credentials in `.env`, same as manual smoke testing.
+Scores to Langfuse Cloud when `LANGFUSE_PUBLIC_KEY`/`SECRET_KEY` are set; otherwise runs and
+reports locally with no remote calls. KB-route cases use a small fixture, not a live
+`enterprise-rag-platform` account (there is no shared demo account -- see "Multi-tenant auth"
+above); web-fallback and refusal cases exercise the real reasoning and a real web search.
+
 Project conventions (tickets, ADRs, session logs, memory) live in `.ai/`. See `CLAUDE.md`.
