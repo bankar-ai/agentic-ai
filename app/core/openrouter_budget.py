@@ -35,16 +35,18 @@ _usage_gauge: Gauge | None = None
 
 def _get_gauges() -> tuple[Gauge, Gauge]:
     global _credits_gauge, _usage_gauge
+    # No `unit=` kwarg on either -- same bug already found and fixed once today in
+    # llm_usage_metrics.py: the OTel-to-Prometheus bridge appends the unit to the metric name
+    # (`unit="USD"` turned these into the unqueryable `..._usd_USD`). Both names already say
+    # "usd" in plain text, so the unit field is redundant here too.
     if _credits_gauge is None:
         _credits_gauge = get_meter().create_gauge(
             name="agentic_ai_openrouter_account_total_credits_usd",
-            unit="USD",
             description="OpenRouter account's total funded credits, shared across every key in the workspace",
         )
     if _usage_gauge is None:
         _usage_gauge = get_meter().create_gauge(
             name="agentic_ai_openrouter_account_total_usage_usd",
-            unit="USD",
             description="OpenRouter account's total lifetime usage, shared across every key in the workspace",
         )
     return _credits_gauge, _usage_gauge
