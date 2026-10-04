@@ -23,7 +23,12 @@ logger = logging.getLogger(__name__)
 _CHECK_INTERVAL_SECONDS = 600  # 10 minutes -- a live number, not a real-time one; cheap either way
 _CREDITS_URL = "https://openrouter.ai/api/v1/credits"
 
-_last_checked_at: float = 0.0
+# None, not 0.0: `time.monotonic()`'s reference epoch resets on every fresh container boot (it's
+# time-since-an-arbitrary-point, not time-since-epoch) -- found live, a fresh container's `now` was
+# ~34s, always less than the 600s window compared against a 0.0 baseline, so this silently
+# "throttled" on every single cold start and never actually ran. `None` means "never checked yet",
+# unambiguous regardless of what `now` happens to be on this particular container.
+_last_checked_at: float | None = None
 _credits_gauge: Gauge | None = None
 _usage_gauge: Gauge | None = None
 
@@ -51,9 +56,7 @@ async def maybe_record_openrouter_budget(api_key: str) -> None:
     """
     global _last_checked_at
     now = time.monotonic()
-    logger.info("openrouter_budget: entered, now=%s last_checked_at=%s", now, _last_checked_at)
-    if now - _last_checked_at < _CHECK_INTERVAL_SECONDS:
-        logger.info("openrouter_budget: throttled, skipping")
+    if _last_checked_at is not None and now - _last_checked_at < _CHECK_INTERVAL_SECONDS:
         return
     _last_checked_at = now
 

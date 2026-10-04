@@ -8,13 +8,18 @@ from app.core.openrouter_budget import maybe_record_openrouter_budget
 
 
 def _reset():
-    openrouter_budget._last_checked_at = 0.0
+    openrouter_budget._last_checked_at = None
     openrouter_budget._credits_gauge = None
     openrouter_budget._usage_gauge = None
 
 
 @pytest.mark.asyncio
 async def test_records_gauges_from_a_successful_response(monkeypatch):
+    """Regression test for a real live bug: `_last_checked_at` defaulting to `0.0` meant a fresh
+    container (where `time.monotonic()` itself starts near 0, since its reference epoch resets
+    per-process) always looked "recently checked" and silently skipped every single time. The
+    sentinel is `None` now specifically so the very first call -- exactly this test's scenario --
+    always proceeds regardless of what `now` happens to be."""
     _reset()
     set_calls = []
 
