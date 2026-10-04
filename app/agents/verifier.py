@@ -27,6 +27,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models import Model
 
 from app.agents.schemas import DraftAnswer, Evidence, VerificationResult
+from app.core.llm_metrics import measure_llm_call
 
 _SYSTEM_PROMPT = """You are the Verifier agent. Given a draft answer and the evidence that was
 actually retrieved for it, check whether every factual claim in the answer is supported by that
@@ -63,5 +64,6 @@ async def verify_answer(model: Model | None, draft: DraftAnswer, evidence: list[
     agent = Agent(model, output_type=VerificationResult, system_prompt=_SYSTEM_PROMPT, retries=_OUTPUT_RETRIES)
     evidence_block = "\n".join(f"[{item.source}] {item.citation}: {item.text}" for item in evidence)
     prompt = f"Draft answer: {draft.text}\n\nRetrieved evidence:\n{evidence_block}"
-    result = await agent.run(prompt)
+    with measure_llm_call("verifier"):
+        result = await agent.run(prompt)
     return result.output

@@ -8,6 +8,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models import Model
 
 from app.agents.schemas import DraftAnswer, Evidence
+from app.core.llm_metrics import measure_llm_call
 
 _SYSTEM_PROMPT = """You are the Writer agent. Synthesize a clear, cited answer from the given
 evidence. Cite each claim with its source. If any evidence came from the web rather than the
@@ -36,5 +37,6 @@ async def write_answer(model: Model | None, query: str, evidence: list[Evidence]
     agent = Agent(model, output_type=DraftAnswer, system_prompt=_SYSTEM_PROMPT, retries=_OUTPUT_RETRIES)
     evidence_block = "\n".join(f"[{item.source}] {item.citation}: {item.text}" for item in evidence)
     prompt = f"Question: {query}\n\nEvidence:\n{evidence_block}"
-    result = await agent.run(prompt)
+    with measure_llm_call("writer"):
+        result = await agent.run(prompt)
     return result.output

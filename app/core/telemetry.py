@@ -51,6 +51,20 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExporter
 logger = logging.getLogger(__name__)
 
 
+def get_tracer() -> trace.Tracer:
+    """Return this process's OTel tracer, used by hand-written spans (AGT-021) across the
+    codebase -- works whether or not `configure_telemetry` ran (a no-op `TracerProvider` is the
+    global default either way, same as `enterprise-rag-platform`'s own `get_tracer()`).
+    """
+    return trace.get_tracer(__name__)
+
+
+def get_meter() -> metrics.Meter:
+    """Return this process's OTel meter, used by hand-written metrics (AGT-021) across the
+    codebase."""
+    return metrics.get_meter(__name__)
+
+
 class _NoExtractPropagator(TextMapPropagator):
     """A real no-op propagator: ignores any inbound trace-context header entirely and injects
     nothing. `CompositePropagator([])` looks like the obvious way to express "ignore everything",
