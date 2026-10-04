@@ -133,6 +133,20 @@ History belongs in `.ai/sessions/`, not here.
   `agentic-ai -- Service Observability` (`uid arxchd`) created with the cross-project panels plus
   AGT-021's new per-node/MCP/LLM-duration panels. Both live-verified via the render API (actual
   screenshots showing real data, not just that the dashboard JSON was accepted).
+- **Service-status probe + query outcome/retry metrics added (`AGT-022`, 2026-10-04):** closed two
+  gaps found comparing `agentic-ai`'s dashboard against `enterprise-rag-platform`'s and researching
+  what a multi-agent system should track -- new `GET /health` (no auth/LLM calls), a Grafana Cloud
+  Synthetic Monitoring check against it (`agentic-ai-health`, 5-min frequency), a query-outcome
+  counter (`agentic_ai_query_outcome_total`, labeled completed/refused/error), and a
+  verifier-retry histogram (`agentic_ai_verifier_retry_count`). Deployed as
+  `agentic-ai-00020-9d6`. Found and fixed a real deployment-config bug along the way (unrelated to
+  this ticket's own code): an earlier redeploy had left the service's env-var template pointing
+  `OTEL_EXPORTER_OTLP_HEADERS` at a nonexistent secret and dropped the `LANGFUSE_*` vars entirely
+  -- fixed via `gcloud run services update`, verified clean before redeploying; the live-serving
+  revision was never actually affected, since every broken attempt failed before creating a new
+  revision. Live-verified: the new probe is green, the error-outcome counter has a real sample,
+  the retry histogram is correctly empty (no query has completed end-to-end yet), and all three
+  new dashboard panels confirmed via the render API.
 
 ## Known Gaps / Follow-ups
 
