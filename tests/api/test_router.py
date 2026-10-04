@@ -1,5 +1,5 @@
 import sys
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi.testclient import TestClient
 
@@ -317,3 +317,112 @@ def test_query_endpoint_records_error_outcome_on_failure():
 
     mock_outcome.assert_called_once_with("error")
     mock_retry.assert_not_called()
+
+
+class _FakeCache:
+    """Stands in for `QueryCache` (AGT-041) -- records every `record()` call and returns a fixed
+    `lookup()` result, so tests can assert on cache-hit/-miss behavior without a real database."""
+
+    def __init__(self, lookup_result=None):
+        self.lookup_result = lookup_result
+        self.record_calls: list[dict] = []
+
+    async def lookup(self, user_id, mode, question):
+        return self.lookup_result
+
+    async def record(self, **kwargs):
+        self.record_calls.append(kwargs)
+
+
+def _jwt_with_sub(sub: str) -> str:
+    import base64
+    import json
+
+    def b64(obj) -> str:
+        return base64.urlsafe_b64encode(json.dumps(obj).encode()).decode().rstrip("=")
+
+    return f"{b64({'alg': 'HS256'})}.{b64({'sub': sub})}.sig"
+
+
+_CACHE_AUTH_HEADERS = {"Authorization": f"Bearer {_jwt_with_sub('user-abc')}", "X-RAG-CSRF-Token": "csrf"}
+
+
+def test_query_endpoint_serves_a_cache_hit_without_running_the_graph():
+    from app.core.query_cache import CachedQueryResult
+
+    cached = CachedQueryResult(
+        answer="Paris is the capital of France.",
+        refused=False,
+        trace=[{"agent": "gatekeeper", "route": "kb", "reasoning": "ok"}],
+        source_filename=None,
+    )
+    fake_cache = _FakeCache(lookup_result=cached)
+    fake_graph = MagicMock()
+    fake_graph.astream = MagicMock(side_effect=AssertionError("graph should not run on a cache hit"))
+
+    with (
+        patch("app.api.router.get_graph", return_value=fake_graph),
+        patch("app.api.router.get_query_cache", AsyncMock(return_value=fake_cache)),
+    ):
+        client = TestClient(app)
+        response = client.post("/query", json={"query": "What is the capital of France?"}, headers=_CACHE_AUTH_HEADERS)
+
+    assert response.status_code == 200
+    assert "Paris" in response.text
+    assert '"duration_seconds": 0.0' in response.text
+    assert len(fake_cache.record_calls) == 1
+    assert fake_cache.record_calls[0]["served_from_cache"] is True
+
+
+def test_query_endpoint_records_history_on_a_cache_miss():
+    gatekeeper_state = {
+        "final_answer": None, "refused": False,
+        "trace": [{"agent": "gatekeeper", "route": "kb", "reasoning": "ok"}],
+    }
+    verifier_state = {
+        "final_answer": "Paris [geo.pdf]", "refused": False,
+        "trace": [gatekeeper_state["trace"][0], {"agent": "verifier", "grounded": True}],
+    }
+    fake_graph = _graph([{"gatekeeper": gatekeeper_state}, {"verifier": verifier_state}])
+    fake_cache = _FakeCache(lookup_result=None)
+
+    with (
+        patch("app.api.router.get_graph", return_value=fake_graph),
+        patch("app.api.router.get_query_cache", AsyncMock(return_value=fake_cache)),
+    ):
+        client = TestClient(app)
+        response = client.post("/query", json={"query": "What is the capital of France?"}, headers=_CACHE_AUTH_HEADERS)
+
+    assert response.status_code == 200
+    assert len(fake_cache.record_calls) == 1
+    assert fake_cache.record_calls[0]["served_from_cache"] is False
+    assert fake_cache.record_calls[0]["answer"] == "Paris [geo.pdf]"
+
+
+def test_query_direct_endpoint_serves_a_cache_hit_without_calling_run_direct_query():
+    from app.core.query_cache import CachedQueryResult
+
+    cached = CachedQueryResult(answer="Paris.", refused=False, trace=[], source_filename="geo.pdf")
+    fake_cache = _FakeCache(lookup_result=cached)
+
+    async def fake_run_direct_query(client, query):
+        raise AssertionError("should not run retrieval on a cache hit")
+
+    with (
+        patch("app.api.router.run_direct_query", fake_run_direct_query),
+        patch("app.api.router.get_query_cache", AsyncMock(return_value=fake_cache)),
+    ):
+        client = TestClient(app)
+        response = client.post("/query/direct", json={"query": "What is the capital of France?"}, headers=_CACHE_AUTH_HEADERS)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["text"] == "Paris."
+    assert body["source_filename"] == "geo.pdf"
+    assert body["duration_seconds"] == 0.0
+
+
+# Every test above this point in the file runs with no `get_query_cache` patch at all, exercising
+# the real function against this test environment's `DATABASE_URL`-less `.env` -- they already
+# confirm an unconfigured deploy behaves exactly as it did before this ticket (`get_query_cache`
+# returns `None`, no database touched), so no separate test duplicates that here.

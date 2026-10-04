@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Self-correcting agentic RAG orchestration (Gatekeeper/Research/Writer/Verifier on LangGraph + PydanticAI) over enterprise-rag-platform via MCP"
 requires-python = ">=3.12"
 dependencies = [
+    "asyncpg>=0.30.0",
     "ddgs>=9.16.0",
     "fastapi>=0.142.2",
     "gradio>=6.29.0",
@@ -30,3 +31,9 @@ dev = [
     "pytest-cov>=7.1.0",
     "ruff>=0.16.9",
 ]
+
+[[tool.mypy.overrides]]
+# asyncpg (AGT-041) ships no py.typed marker/stubs -- every other dependency here happens to have
+# one, so this is the first package needing this override.
+module = "asyncpg"
+ignore_missing_imports = true

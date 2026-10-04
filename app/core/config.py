@@ -46,6 +46,11 @@ class Settings(BaseSettings):
 
     max_verification_retries: int = 2
 
+    # AGT-041: optional server-side query cache + durable history. Unset means
+    # `app.core.query_cache.get_query_cache` returns None and both query endpoints behave exactly
+    # as before this ticket -- no hard dependency on this database existing.
+    database_url: str | None = None
+
 
 @lru_cache
 def get_settings() -> Settings:
