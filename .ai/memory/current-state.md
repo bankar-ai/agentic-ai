@@ -164,11 +164,14 @@ History belongs in `.ai/sessions/`, not here.
   project owner connecting the GitHub repo and adding
   `bankar-ai-agentic-rag-orchestrator.vercel.app` as a real project Domain marked Production, which
   is exempted from SSO protection automatically. GitHub is now connected for auto-deploy on push
-  to `main`. Caught along the way: connecting GitHub left the project's Root Directory setting
-  blank (repo root) — the old CLI-only deploys had bypassed that setting by building from inside
-  `frontend/` directly, but a Git-triggered build would have failed without it set to `frontend`;
-  fixed before any such build ran. Both `agentic-ai-psi-mauve.vercel.app` and the new readable URL
-  work.
+  to `main`, confirmed live (a push produced a real successful build). Caught along the way:
+  connecting GitHub left the project's Root Directory setting blank (repo root) — fixed to
+  `frontend` before any Git-triggered build could fail on it. **The original
+  `agentic-ai-psi-mauve.vercel.app` URL is now dead (404)** — connecting GitHub reassigned the
+  project's auto-generated default domain out from under it; `agentic-ai-bankar-ai.vercel.app`
+  (the new default) is itself SSO-gated same as before. **`bankar-ai-agentic-rag-orchestrator.vercel.app`
+  is the one working public URL now** — `CORS_ALLOWED_ORIGINS` cleaned up to just that one,
+  verified via a real CORS preflight check.
 - **Verification gap, named honestly**: `AGT-026`/`027`'s frontend features (session-expiry
   warning, draft preservation, history panel) were verified by code review, a clean build, and
   confirming the deployed JS bundle contains the feature strings -- not by an actual browser
