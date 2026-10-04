@@ -231,7 +231,13 @@ History belongs in `.ai/sessions/`, not here.
   session): confirmed real content, a real `kb`-route trace, and -- thanks to `AGT-035` -- full
   visibility into exactly why the Verifier rejected two drafts in a row (a genuinely subtle
   "recommends X" vs. "already does X" distinction, not something `grounded: false` alone could
-  ever have shown).
+  ever have shown). **Re-verified later the same day** end-to-end from scratch: confirmed the
+  Vercel bundle still serves the mode toggle, re-logged-in and ran fresh `/query/direct` and
+  `/query` calls (the latter rejected twice again, both with full reasoning/unsupported_claims),
+  confirmed `agentic_ai_query_duration_seconds_count` accumulating real samples for both
+  `mode="agentic"` and `mode="direct"` in Prometheus, and rendered the dashboard's duration panel
+  (`arxchd`, panel 141) showing real p50/p95 lines for the first time (earlier same-day check
+  had only one sample, too few for `rate()` to plot).
 
 ## Known Gaps / Follow-ups
 
