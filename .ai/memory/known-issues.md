@@ -17,3 +17,7 @@ entry once it's resolved, don't just mark it done.
   build, and confirming the deployed bundle contains each feature's strings — not by an actual
   click-through in a browser (none was available this session). Worth doing a real click-through
   next time one is.
+- **AGT-033 (Backlog): web search intermittently returns zero results.** `ddgs`'s underlying
+  search backends sometimes reject Cloud Run's outbound traffic (403/429 from Google, Mojeek,
+  Brave specifically observed), causing a correct-but-unwanted refusal when it happens on both
+  Research retry attempts. Not characterized for real frequency yet — see the ticket.

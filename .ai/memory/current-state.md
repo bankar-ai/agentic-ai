@@ -202,12 +202,25 @@ History belongs in `.ai/sessions/`, not here.
   the OTel-to-Prometheus export bridge into an unqueryable metric name -- root-caused via the full
   metric catalog, not assumed as export lag. Live-verified after the fix with real per-agent cost
   data.
-- **Recurring quirk, every fresh deploy this session**: a new Cloud Run revision's first 1-3
-  query attempts hit OpenRouter `429`s for roughly 1-3 minutes before succeeding -- confirmed each
-  time it's NOT a budget/quota issue (isolated calls work fine in the same window); not fully
-  root-caused, likely `FallbackModel` + structured-output retries amplifying one logical call into
-  several rapid requests against a cold connection pool. Expect this after every redeploy; it
-  clears on its own.
+- **Recurring post-deploy throttle quirk, root-caused (`AGT-032`, 2026-10-04)**: a new Cloud Run
+  revision's first 1-3 query attempts hit OpenRouter `429`s for roughly 1-3 minutes before
+  succeeding -- confirmed NOT a budget/quota issue each time. Real cause found via native GCP
+  Cloud Logging (switched to while debugging `AGT-031`, below): the `openai` SDK client has its
+  own built-in retry-with-backoff on `429`, invisible to this project's own telemetry/Grafana logs
+  entirely -- actual request volume during a throttle window was higher than anything previously
+  visible. Expect this after every redeploy; it clears on its own.
+- **Live OpenRouter shared-budget dashboard panels shipped (`AGT-031`, 2026-10-04)**, after four
+  real bugs, each found with live evidence rather than guessed: a bare `asyncio.create_task()`
+  with no owner, `StreamingResponse(background=...)` losing Cloud Run's CPU-throttling race, a
+  `time.monotonic()` sentinel that resets every cold start (the real root cause -- found only by
+  cross-checking native GCP Cloud Logging against this project's own documented-flaky OTLP log
+  export), and a repeat of `AGT-030`'s own `unit="USD"` naming bug. Live-verified working after
+  all four: real credits/usage gauges, dashboard stat panel confirmed via the render API.
+- **New finding, not yet fixed (`AGT-033`, Backlog)**: the free `ddgs` web-search fallback
+  intermittently returns zero results -- native logging shows some of its underlying search
+  backends (Google, Mojeek, Brave) rejecting requests outright (403/429), consistent with
+  cloud-provider IP fingerprinting. The system's own refusal-on-zero-evidence behavior is correct;
+  the open question is how often this happens and whether it's worth mitigating.
 
 ## Known Gaps / Follow-ups
 
