@@ -177,6 +177,17 @@ History belongs in `.ai/sessions/`, not here.
   confirming the deployed JS bundle contains the feature strings -- not by an actual browser
   click-through, since no browser tool was available this session. Worth a real click-through next
   time one is.
+- **CSP and security headers added (`AGT-028`, 2026-10-04)**: `frontend/vercel.json` now sets a
+  strict `Content-Security-Policy` plus `X-Content-Type-Options`/`X-Frame-Options`/
+  `Referrer-Policy`, defense-in-depth for the session-token-in-memory constraint `AGT-026`
+  documented. Live-verified via `curl -sI` and a real cross-origin API call still working.
+- **`AGT-021`/`022`'s remaining live-verification gap closed for real, same day**: switched
+  `agentic-ai` off the free-tier-only model pair -- primary is now `google/gemma-3-27b-it` (cheap
+  paid, same model `enterprise-rag-platform` runs in production), fallback is the free nemotron
+  model (now a genuine fallback, not sharing the primary's exhausted daily quota). A real query
+  then completed end-to-end for the first time this project's life: all four node spans, the
+  `completed` outcome, and the verifier-retry metric all confirmed live with real data, and the
+  answer itself was correctly grounded and cited.
 
 ## Known Gaps / Follow-ups
 

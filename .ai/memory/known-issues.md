@@ -5,15 +5,13 @@ entry once it's resolved, don't just mark it done.
 
 ## Current
 
-- **AGT-021 live verification is partial**: `research_node`/`writer_node`/`verifier_node`/
-  `mcp.search_knowledge_base` spans, and `AGT-022`'s `agentic_ai_verifier_retry_count` metric,
-  haven't been exercised live — every query attempt has failed before reaching them, currently
-  because the OpenRouter workspace's daily free-model quota is exhausted (shared across both
-  `enterprise-rag-platform` and `agentic-ai`'s testing; a dedicated `agentic-ai` API key generated
-  2026-10-04 does not get its own separate quota — confirmed live, the cap is workspace-scoped).
-  Resets once per UTC day. Not a code bug; `gatekeeper_node`'s span and the `llm_generation_duration_seconds`
-  metric are both confirmed working, including correctly on failure. Re-verify with one live query
-  once the quota resets — see `AGT-021`/`AGT-022`'s own resolution notes.
+- **`mcp.search_knowledge_base` span still unexercised live**: `AGT-021`'s other three node spans
+  (`research_node`/`writer_node`/`verifier_node`) and `AGT-022`'s retry metric are now fully
+  verified (2026-10-04, after switching the primary model to `google/gemma-3-27b-it` — see
+  `AGT-021`'s Final Verification notes), but that one successful query took the `web_fallback`
+  route, not `kb`, so the MCP tool-call span specifically has never fired live. Not a bug — just
+  needs one query that actually has KB content to retrieve (the test account used so far has none
+  ingested). Re-verify next time a query against an account with real ingested content succeeds.
 - **AGT-024/026/027's frontend features aren't browser-verified**: the about page, session-expiry
   warning, draft-query preservation, and history panel were verified by code review, a clean
   build, and confirming the deployed bundle contains each feature's strings — not by an actual
