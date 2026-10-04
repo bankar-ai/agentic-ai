@@ -183,10 +183,37 @@ export function QueryPage() {
 
   return (
     <div className="min-h-screen bg-slate-50">
-      <header className="border-b border-slate-200 bg-white px-6 py-3">
-        <div className="mx-auto flex max-w-3xl flex-wrap items-center justify-between gap-3">
-          <span className="text-lg font-semibold text-slate-900">Agentic RAG Orchestration</span>
-          <nav className="flex items-center gap-1" role="tablist" aria-label="Query mode">
+      <header className="border-b border-slate-200 bg-white px-4 py-3 sm:px-6">
+        <div className="mx-auto flex max-w-3xl flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+          <div className="flex items-center justify-between sm:contents">
+            <span className="text-lg font-semibold text-slate-900">Agentic RAG Orchestration</span>
+            <div className="flex items-center gap-3 sm:order-3">
+              <Link
+                to="/about"
+                title="What is this?"
+                className="flex h-6 w-6 items-center justify-center rounded-full border border-slate-300 text-xs font-semibold text-slate-500 hover:bg-slate-100"
+              >
+                ?
+              </Link>
+              <span className="hidden truncate text-sm text-slate-500 sm:inline" title={session.email}>
+                {session.email}
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  logout();
+                  navigate("/");
+                }}
+                className="rounded-md bg-slate-100 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-200"
+              >
+                Log out
+              </button>
+            </div>
+          </div>
+          <span className="truncate text-xs text-slate-500 sm:hidden" title={session.email}>
+            {session.email}
+          </span>
+          <nav className="flex items-center gap-1 overflow-x-auto sm:order-2" role="tablist" aria-label="Query mode">
             {(["agentic", "direct"] as Mode[]).map((m) => (
               <button
                 key={m}
@@ -204,32 +231,10 @@ export function QueryPage() {
               </button>
             ))}
           </nav>
-          <div className="flex items-center gap-3">
-            <Link
-              to="/about"
-              title="What is this?"
-              className="flex h-6 w-6 items-center justify-center rounded-full border border-slate-300 text-xs font-semibold text-slate-500 hover:bg-slate-100"
-            >
-              ?
-            </Link>
-            <span className="truncate text-sm text-slate-500" title={session.email}>
-              {session.email}
-            </span>
-            <button
-              type="button"
-              onClick={() => {
-                logout();
-                navigate("/");
-              }}
-              className="rounded-md bg-slate-100 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-200"
-            >
-              Log out
-            </button>
-          </div>
         </div>
       </header>
 
-      <main className="mx-auto max-w-3xl space-y-4 px-6 py-6">
+      <main className="mx-auto max-w-3xl space-y-4 px-4 py-6 sm:px-6">
         <p className="text-sm text-slate-500">
           {mode === "agentic"
             ? "Full pipeline: routes, retrieves, drafts, and verifies before answering."
