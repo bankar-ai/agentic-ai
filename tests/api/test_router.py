@@ -426,3 +426,58 @@ def test_query_direct_endpoint_serves_a_cache_hit_without_calling_run_direct_que
 # the real function against this test environment's `DATABASE_URL`-less `.env` -- they already
 # confirm an unconfigured deploy behaves exactly as it did before this ticket (`get_query_cache`
 # returns `None`, no database touched), so no separate test duplicates that here.
+
+
+def test_history_endpoint_requires_auth():
+    client = TestClient(app)
+    response = client.get("/history")
+    assert response.status_code == 401
+
+
+def test_history_endpoint_returns_empty_list_without_database_configured():
+    """`get_query_cache` returns `None` when `DATABASE_URL` is unset -- real (unpatched)
+    function, confirming this endpoint degrades to an empty list rather than erroring."""
+    client = TestClient(app)
+    response = client.get("/history", headers=_AUTH_HEADERS)
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_history_endpoint_returns_the_callers_recent_entries():
+    from app.core.query_cache import HistoryEntry
+
+    entry = HistoryEntry(
+        question="What is the capital of France?",
+        answer="Paris.",
+        refused=False,
+        mode="agentic",
+        trace=[{"agent": "gatekeeper"}],
+        source_filename=None,
+        duration_seconds=1.5,
+        created_at="2026-10-04T12:00:00Z",
+    )
+
+    class _FakeCacheWithHistory(_FakeCache):
+        async def list_recent(self, user_id, limit=5):
+            return [entry]
+
+    with patch("app.api.router.get_query_cache", AsyncMock(return_value=_FakeCacheWithHistory())):
+        client = TestClient(app)
+        response = client.get("/history", headers=_CACHE_AUTH_HEADERS)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body) == 1
+    assert body[0]["question"] == "What is the capital of France?"
+    assert body[0]["mode"] == "agentic"
+
+
+def test_history_endpoint_returns_empty_list_when_token_has_no_sub_claim():
+    with patch("app.api.router.get_query_cache", AsyncMock(return_value=_FakeCache())):
+        client = TestClient(app)
+        # _AUTH_HEADERS' bearer token ("user-token-123") isn't a JWT, so decode_user_id returns
+        # None -- confirms this degrades gracefully instead of raising.
+        response = client.get("/history", headers=_AUTH_HEADERS)
+
+    assert response.status_code == 200
+    assert response.json() == []

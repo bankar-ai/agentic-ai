@@ -1,11 +1,13 @@
-/** Client-side-only query history (AGT-027): browser `localStorage`, capped at 20 entries stored,
- * per-device -- deliberately not server-side (agentic-ai has no database of its own, and adding
- * one just for this is a real infra decision not worth making for a "see my past few queries"
- * ask -- see AGT-041 for that piece, once it exists). Every read/write is wrapped in try/catch: a
- * private window, cleared/blocked site data, or any other storage failure must degrade to "no
- * history", never break the query flow itself.
+/** Query history (AGT-027): browser `localStorage`, capped at 20 entries stored. Originally
+ * per-device-only (`agentic-ai` had no database of its own); `AGT-041`/`AGT-044` part 2 added a
+ * server-side `query_history` table this now reconciles against (`mergeServerHistory` below), so
+ * two devices/tabs logged into the same account converge on the same recent history instead of
+ * each only ever seeing its own browser's queries. `localStorage` stays the instant-render layer
+ * (AGT-040's click-to-reopen never waits on a network round trip) and the offline/no-database
+ * fallback. Every read/write is wrapped in try/catch: a private window, cleared/blocked site
+ * data, or any other storage failure must degrade to "no history", never break the query flow.
  */
-import type { TraceStep } from "./api";
+import type { ServerHistoryEntry, TraceStep } from "./api";
 import { subscribeToStorageKey } from "./storageSync";
 
 const STORAGE_KEY = "agentic-ai.history";
@@ -58,6 +60,40 @@ export function appendHistory(entry: Omit<HistoryEntry, "id" | "timestamp">): vo
     localStorage.setItem(STORAGE_KEY, JSON.stringify(trimmed));
   } catch {
     // Storage unavailable (private window, blocked site data, quota) -- history is best-effort.
+  }
+}
+
+/** AGT-044 part 2: folds server-known entries (from `GET /history`) into the local list,
+ * skipping any that already match a stored entry by mode+question+answer (whether this exact
+ * tab wrote it via `appendHistory` or an earlier merge already pulled it in) -- so a second
+ * device's queries show up here without duplicating this device's own. Returns `true` when
+ * anything new was actually added, so the caller knows whether to re-render. */
+export function mergeServerHistory(entries: ServerHistoryEntry[]): boolean {
+  try {
+    const existing = loadHistory();
+    const existingKeys = new Set(existing.map((e) => `${e.mode}:${e.question}:${e.answer}`));
+    const toAdd: HistoryEntry[] = entries
+      .filter((e) => !existingKeys.has(`${e.mode}:${e.question}:${e.answer}`))
+      .map((e) => ({
+        id: crypto.randomUUID(),
+        question: e.question,
+        answer: e.answer,
+        refused: e.refused,
+        timestamp: Date.parse(e.createdAt),
+        mode: e.mode,
+        durationSeconds: e.durationSeconds,
+        trace: e.trace,
+        sourceFilename: e.sourceFilename,
+      }));
+    if (toAdd.length === 0) return false;
+    const merged = [...toAdd, ...existing]
+      .sort((a, b) => b.timestamp - a.timestamp)
+      .slice(0, MAX_ENTRIES_STORED);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
+    return true;
+  } catch {
+    // Storage unavailable -- the server fetch still succeeded, just nothing to merge into.
+    return false;
   }
 }
 

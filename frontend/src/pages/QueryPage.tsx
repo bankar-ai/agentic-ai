@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import {
   DocumentsError,
   fetchDocuments,
+  fetchHistory,
   runDirectQuery,
   runQuery,
   QueryError,
@@ -16,6 +17,7 @@ import {
   deleteHistoryEntry,
   loadAndClearDraftQuery,
   loadHistory,
+  mergeServerHistory,
   saveDraftQuery,
   subscribeToHistoryChanges,
   MAX_ENTRIES_SHOWN,
@@ -93,6 +95,22 @@ export function QueryPage() {
   // AGT-044: a query appended/deleted/cleared from another tab of the same browser updates this
   // tab's history list live.
   useEffect(() => subscribeToHistoryChanges(() => setHistory(loadHistory())), []);
+
+  // AGT-044 part 2: the server-side history list (AGT-041) is the cross-device source of truth
+  // -- the locally cached list already rendered synchronously above, this just reconciles it
+  // against what a second device/tab may have asked. A failed fetch (no database configured,
+  // network hiccup) silently falls back to the local-only list already shown, same
+  // stale-while-revalidate pattern as the documents panel (AGT-038).
+  useEffect(() => {
+    if (!session) return;
+    fetchHistory(session, MAX_ENTRIES_SHOWN)
+      .then((entries) => {
+        if (mergeServerHistory(entries)) setHistory(loadHistory());
+      })
+      .catch(() => {
+        // Best-effort: the locally cached history list stays as-is.
+      });
+  }, [session]);
 
   if (!session) {
     navigate("/");

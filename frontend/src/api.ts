@@ -149,3 +149,54 @@ export async function fetchDocuments(session: LoginResult): Promise<DocumentSumm
     createdAt: doc.created_at,
   }));
 }
+
+/** `GET /history` (AGT-044 part 2): the caller's own most recent queries, server-side -- the
+ * cross-device source of truth `localStorage` alone can never be, since two different browsers
+ * have no way to share disk storage. Returns an empty list (not an error) when the server has no
+ * database configured or the token carries no decodable user id -- `QueryPage.tsx` treats that
+ * exactly like "nothing from the server yet", falling back to its `localStorage` copy.
+ */
+export interface ServerHistoryEntry {
+  question: string;
+  answer: string;
+  refused: boolean;
+  mode: "agentic" | "direct";
+  trace: TraceStep[];
+  sourceFilename: string | null;
+  durationSeconds: number | null;
+  createdAt: string;
+}
+
+export async function fetchHistory(session: LoginResult, limit = 5): Promise<ServerHistoryEntry[]> {
+  const response = await fetch(`${API_BASE_URL}/history?limit=${limit}`, {
+    headers: {
+      Authorization: `Bearer ${session.accessToken}`,
+      "X-RAG-CSRF-Token": session.csrfToken,
+    },
+  });
+  if (!response.ok) {
+    throw new QueryError(`Could not load history (${response.status}).`);
+  }
+  const body = await response.json();
+  return body.map(
+    (entry: {
+      question: string;
+      answer: string;
+      refused: boolean;
+      mode: "agentic" | "direct";
+      trace: TraceStep[];
+      source_filename: string | null;
+      duration_seconds: number | null;
+      created_at: string;
+    }) => ({
+      question: entry.question,
+      answer: entry.answer,
+      refused: entry.refused,
+      mode: entry.mode,
+      trace: entry.trace,
+      sourceFilename: entry.source_filename,
+      durationSeconds: entry.duration_seconds,
+      createdAt: entry.created_at,
+    })
+  );
+}
