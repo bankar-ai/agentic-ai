@@ -227,7 +227,7 @@ History belongs in `.ai/sessions/`, not here.
 Tracked as tickets in `.ai/tickets/` rather than duplicated here in full — this section is a quick
 index, read the ticket for detail.
 
-Every `AGT-*` ticket (`001`-`020`) is resolved — `AGT-019` as **Won't Do** (see below), everything
+Every `AGT-*` ticket (`001`-`032`) is resolved — `AGT-019` as **Won't Do** (see below), everything
 else **Done**. See each ticket for detail; `AGT-008`/`AGT-009`/`AGT-012` (2026-10-03/04) landed
 together with a real concurrency bug found and fixed along the way (`StaticTokenAuth` was unsafe
 to share across concurrent different-user requests); `AGT-011` (2026-10-04) added
@@ -263,6 +263,8 @@ resources were ever created.
 
 ## Next Planned Work
 
-Nothing open. Anyone demoing this project live needs their own `enterprise-rag-platform` account
-with real content already ingested on it — that's the demo's only precondition, and it's a
-per-demo setup step, not a standing gap in the project itself.
+One open item: `AGT-033` (Backlog) — characterize and decide whether to mitigate the free
+`ddgs` web-search fallback's intermittent zero-result failures (see `known-issues.md`). Everything
+else is resolved. Anyone demoing this project live needs their own `enterprise-rag-platform`
+account with real content already ingested on it — that's the demo's only precondition, and it's
+a per-demo setup step, not a standing gap in the project itself.
