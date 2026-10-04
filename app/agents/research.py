@@ -32,6 +32,7 @@ from pydantic_ai.mcp import MCPToolset, StdioTransport
 
 from app.agents.schemas import Evidence, GatekeeperDecision, ResearchResult, UserSession
 from app.agents.web_search import search_web
+from app.core.telemetry import get_tracer
 
 _KB_TOOL_NAME = "search_knowledge_base"
 _FORWARDED_ENV_PREFIXES = ("RAG_PLATFORM_",)
@@ -82,9 +83,13 @@ async def _research_kb(
     # server-side failure (e.g. the RAG platform being down) must raise, not become a ModelRetry.
     mcp_toolset = MCPToolset(transport, tool_error_behavior="error")
     try:
-        raw = await mcp_toolset.direct_call_tool(
-            _KB_TOOL_NAME, {"query": query, "top_k": decision.top_k, "rerank": decision.rerank}
-        )
+        # AGT-021: its own span, distinguishable from the rest of research_node's work -- "how
+        # long did Research spend waiting on enterprise-rag-platform via MCP" shouldn't be
+        # blended into the node's total duration.
+        with get_tracer().start_as_current_span("mcp.search_knowledge_base"):
+            raw = await mcp_toolset.direct_call_tool(
+                _KB_TOOL_NAME, {"query": query, "top_k": decision.top_k, "rerank": decision.rerank}
+            )
     except (ToolError, MCPError) as exc:
         raise KnowledgeBaseUnavailable(f"The knowledge base tool call failed: {exc}") from exc
     if not isinstance(raw, list):

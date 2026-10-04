@@ -10,6 +10,7 @@ from app.agents.research import research
 from app.agents.schemas import GraphState
 from app.agents.verifier import verify_answer
 from app.agents.writer import write_answer
+from app.core.telemetry import get_tracer
 from app.core.tracing import NoOpTracer, Tracer
 from app.rag_client.retrieval import RagPlatformRetrievalClient
 
@@ -27,6 +28,7 @@ def build_graph(
     to a no-op so callers that don't pass one (or don't configure Langfuse) are unaffected.
     """
     tracer = tracer or NoOpTracer()
+    otel_tracer = get_tracer()
 
     async def gatekeeper_node(state: GraphState) -> GraphState:
         # grade_retrieval requires non-optional Model. By the calling pattern in production
@@ -35,7 +37,10 @@ def build_graph(
         # the assertion fails immediately with a clear error, rather than silently failing
         # deep inside PydanticAI.
         assert model is not None
-        decision = await grade_retrieval(model, retrieval_client, state["query"])
+        # AGT-021: a real span with actual duration, distinct from LangfuseTracer.trace_step()'s
+        # point-in-time event -- this is the only place node latency is visible.
+        with otel_tracer.start_as_current_span("gatekeeper_node"):
+            decision = await grade_retrieval(model, retrieval_client, state["query"])
         state["gatekeeper_decision"] = decision
         step = {"agent": "gatekeeper", "route": decision.route, "reasoning": decision.reasoning}
         state["trace"].append(step)
@@ -47,9 +52,10 @@ def build_graph(
     async def research_node(state: GraphState) -> GraphState:
         # By control flow, gatekeeper_decision is always set before research_node runs
         assert state["gatekeeper_decision"] is not None
-        result = await research(
-            mcp_server_command, state["gatekeeper_decision"], state["query"], state.get("user_session")
-        )
+        with otel_tracer.start_as_current_span("research_node"):
+            result = await research(
+                mcp_server_command, state["gatekeeper_decision"], state["query"], state.get("user_session")
+            )
         state["evidence"] = result.evidence
         step = {"agent": "research", "evidence_count": len(result.evidence)}
         state["trace"].append(step)
@@ -57,7 +63,8 @@ def build_graph(
         return state
 
     async def writer_node(state: GraphState) -> GraphState:
-        draft = await write_answer(model, state["query"], state["evidence"])
+        with otel_tracer.start_as_current_span("writer_node"):
+            draft = await write_answer(model, state["query"], state["evidence"])
         state["draft"] = draft
         step = {"agent": "writer", "text": draft.text}
         state["trace"].append(step)
@@ -68,7 +75,8 @@ def build_graph(
         # By control flow, draft is always set before verifier_node runs
         assert state["draft"] is not None
         # Verify against the evidence Research actually retrieved, not the Writer's own citations.
-        verification = await verify_answer(model, state["draft"], state["evidence"])
+        with otel_tracer.start_as_current_span("verifier_node"):
+            verification = await verify_answer(model, state["draft"], state["evidence"])
         state["verification"] = verification
         step = {"agent": "verifier", "grounded": verification.grounded}
         state["trace"].append(step)

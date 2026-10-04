@@ -9,6 +9,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models import Model
 
 from app.agents.schemas import GatekeeperDecision
+from app.core.llm_metrics import measure_llm_call
 from app.rag_client.retrieval import RagPlatformRetrievalClient
 
 _SYSTEM_PROMPT = """You are the Gatekeeper of a retrieval-augmented answering system.
@@ -38,7 +39,8 @@ async def grade_retrieval(
 
     agent = _build_agent(model)
     prompt = f"Question: {query}\n\nExploratory KB results:\n{chunk_summaries}"
-    result = await agent.run(prompt)
+    with measure_llm_call("gatekeeper"):
+        result = await agent.run(prompt)
     decision = result.output
 
     # Code-level guard: with zero exploratory results, a "kb" route can only find nothing again,
