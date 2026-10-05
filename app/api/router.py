@@ -18,6 +18,7 @@ from app.agents.research import KnowledgeBaseUnavailable
 from app.agents.schemas import GraphState, UserSession
 from app.api.schemas import QueryRequest
 from app.core.config import get_settings
+from app.core.content_filter import is_flagged
 from app.core.openrouter_budget import maybe_record_openrouter_budget
 from app.core.query_cache import (
     HistoryEntry,
@@ -30,6 +31,8 @@ from app.core.query_metrics import (
     record_query_outcome,
     record_retry_count,
 )
+from app.core.rate_limiter import get_rate_limiter
+from app.core.secret_scan import find_likely_secret
 from app.core.session_store import SessionStore, get_session_store
 from app.core.tracing import get_tracer
 from app.graph.build import build_graph
@@ -120,6 +123,18 @@ async def _event_stream(
     cache: QueryCache | None = None,
     user_id: str | None = None,
 ) -> AsyncIterator[str]:
+    # AGT-057: checked before the cache lookup or anything else -- a flagged query never spends
+    # an LLM call, never gets cached, never reaches the pipeline at all.
+    if is_flagged(query):
+        record_query_outcome("refused")
+        record_query_duration("refused", "agentic", 0.0)
+        yield _format_sse("result", {
+            "final_answer": None,
+            "refused": True,
+            "duration_seconds": 0.0,
+        })
+        return
+
     # AGT-041: a cache hit replays the stored trace/result with no LLM/retrieval work at all --
     # checked before anything else, so a repeat question is near-instant.
     if cache is not None and user_id is not None:
@@ -207,6 +222,14 @@ async def _event_stream(
         record_query_duration("error", "agentic", time.monotonic() - start_time)
         yield _format_sse("error", {"type": type(exc).__name__, "message": "Query failed; see server logs for details."})
         return
+    # AGT-056/057: a final, output-side check -- the Verifier's "grounded" only means "supported
+    # by evidence," not "safe to show." Checked before the answer is recorded to history/cache or
+    # sent to the caller, so a flagged/secret-containing answer never persists or reaches the user.
+    if final_state["final_answer"] and (
+        find_likely_secret(final_state["final_answer"]) or is_flagged(final_state["final_answer"])
+    ):
+        final_state["final_answer"] = None
+        final_state["refused"] = True
     outcome = "refused" if final_state["refused"] else "completed"
     duration_seconds = time.monotonic() - start_time
     record_query_outcome(outcome)
@@ -323,9 +346,23 @@ async def query_direct(
             status_code=401,
             detail="Log in with your enterprise-rag-platform account (Authorization + X-RAG-CSRF-Token headers) to use this service.",
         )
+    # AGT-057: checked before the cache lookup or the retrieval call -- a flagged query never
+    # gets recorded or searched for.
+    if is_flagged(request.query):
+        record_query_outcome("refused")
+        record_query_duration("refused", "direct", 0.0)
+        return DirectQueryResult(text=None, source_filename=None, duration_seconds=0.0)
+
     settings = get_settings()
+    user_id = decode_user_id(user_session.access_token)
+
+    # AGT-058: checked before the cache lookup or the retrieval call.
+    if user_id is not None:
+        rate_limiter = await get_rate_limiter(settings.database_url)
+        if rate_limiter is not None and not await rate_limiter.check_and_record(user_id):
+            raise HTTPException(status_code=429, detail="Too many requests -- please slow down and try again shortly.")
+
     cache = await get_query_cache(settings.database_url)
-    user_id = decode_user_id(user_session.access_token) if cache is not None else None
 
     # AGT-041: a cache hit skips the retrieval call entirely.
     if cache is not None and user_id is not None:
@@ -370,6 +407,11 @@ async def query_direct(
     except RagPlatformRetrievalError as exc:
         record_query_duration("error", "direct", time.monotonic() - start_time)
         raise HTTPException(status_code=502, detail=f"enterprise-rag-platform is unavailable: {exc}") from None
+    # AGT-056/057: output-side check -- Direct RAG shows raw retrieved text verbatim, which is
+    # exactly the case most likely to surface a secret or flagged content straight from an
+    # ingested document, with no Writer/Verifier step in between to catch it.
+    if result.text and (find_likely_secret(result.text) or is_flagged(result.text)):
+        result = result.model_copy(update={"text": None, "source_filename": None})
     duration_seconds = time.monotonic() - start_time
     outcome = "completed" if result.text is not None else "refused"
     record_query_outcome(outcome)
@@ -415,6 +457,15 @@ async def query(
             detail="Log in with your enterprise-rag-platform account (Authorization + X-RAG-CSRF-Token headers) to use this service.",
         )
     settings = get_settings()
+    user_id = decode_user_id(user_session.access_token)
+
+    # AGT-058: checked before the OpenRouter budget check, graph construction, or anything else
+    # that costs real time/money -- an over-limit user is rejected immediately.
+    if user_id is not None:
+        rate_limiter = await get_rate_limiter(settings.database_url)
+        if rate_limiter is not None and not await rate_limiter.check_and_record(user_id):
+            raise HTTPException(status_code=429, detail="Too many requests -- please slow down and try again shortly.")
+
     # AGT-031: awaited inline, not backgrounded -- Cloud Run only guarantees CPU while a request is
     # actively being handled (the default `cpu-throttling` setting this service runs under); a
     # `StreamingResponse(background=...)` task races the sandbox freezing CPU right after the last
@@ -427,7 +478,6 @@ async def query(
     session_store = await get_session_store(settings.database_url)
     graph = get_graph(user_session, session_store)
     cache = await get_query_cache(settings.database_url)
-    user_id = decode_user_id(user_session.access_token) if cache is not None else None
     return StreamingResponse(
         _event_stream(graph, request.query, user_session, cache=cache, user_id=user_id),
         media_type="text/event-stream",
