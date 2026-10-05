@@ -287,22 +287,33 @@ History belongs in `.ai/sessions/`, not here.
   verifying `AGT-046` (`AGT-054`): the retrieval client's flat 30s timeout was shorter than
   Modal's own documented cold-start window (52-59s, confirmed matching exactly on a live retry at
   `duration_seconds: 54.93`) -- guaranteed failure on a cold container, not bad luck; given a 90s
-  per-call-site override. `AGT-051` (revisit refresh tokens now that a database exists) was
-  investigated to a definitive answer -- confirmed technically feasible by reading
-  `enterprise-rag-platform`'s own auth router directly (its refresh token is an `httpOnly` cookie,
-  which blocks browser JS but not a server-side HTTP client; `agentic-ai`'s own `RagPlatformAuth`
-  already does real refresh today for a different flow) -- but implementation deliberately not
-  started, since storing another platform's refresh token is a trust-model decision needing the
-  project owner's explicit go-ahead, not just an open technical path.
+  per-call-site override.
+- **`AGT-033`/`AGT-051` closed out (2026-10-05, later the same day)**: `AGT-033`'s web search now
+  retries once on a zero-result first attempt (a cheap, low-risk mitigation for the documented
+  intermittent soft-block pattern), tested but not re-verified against a fresh live reproduction
+  of the original failure (itself intermittent). `AGT-051` (refresh tokens) was investigated to a
+  definitive "yes, feasible" answer earlier the same day, then **explicitly approved by the
+  project owner** after the trust-model trade-off (storing another platform's refresh token) was
+  presented directly -- built the same session: new `user_sessions` table (shared Neon pool with
+  `query_history` via new `app/core/db.py`), `StaticTokenAuth.refresh()` now attempts a real
+  silent refresh before falling back to "please log in again," wired into all three `router.py`
+  endpoints **and** the MCP subprocess (the `kb`-route path, the dominant real retrieval path --
+  `DATABASE_URL` now forwarded to that subprocess too). **Live-verified with unusual rigor**: an
+  access token confirmed genuinely expired (a real `401` from `enterprise-rag-platform`'s own
+  `/retrieval/query`, checked via VM `journalctl`) was reused against a brand-new, uncached
+  question on the live deployment and the request **succeeded** -- VM logs show the complete real
+  sequence (`401` -> `POST /auth/refresh 200` -> retried retrieval -> `200`), and the stored
+  refresh token in the live Neon table was confirmed to have rotated to a new value with a
+  timestamp matching the refresh call exactly, proving both the read path and the
+  rotate-and-resave path work correctly. The 30-minute forced-logout warning (`AGT-026`) should
+  no longer actually trigger for a logged-in user while their refresh token stays valid.
 
 ## Known Gaps / Follow-ups
 
 Tracked as tickets in `.ai/tickets/` rather than duplicated here in full — this section is a quick
 index, read the ticket for detail.
 
-Every `AGT-*` ticket (`001`-`054`) is resolved except `AGT-033` (Backlog, see below) and `AGT-051`
-(investigation complete, implementation deliberately deferred pending explicit approval of a
-trust-model decision, see below) — `AGT-019` is
+Every `AGT-*` ticket (`001`-`054`) is resolved — `AGT-019` is
 **Won't Do** (see below), everything else **Done**. See each ticket for detail; `AGT-008`/`AGT-009`/`AGT-012` (2026-10-03/04) landed
 together with a real concurrency bug found and fixed along the way (`StaticTokenAuth` was unsafe
 to share across concurrent different-user requests); `AGT-011` (2026-10-04) added
