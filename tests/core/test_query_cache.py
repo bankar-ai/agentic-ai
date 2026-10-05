@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 import pytest
 
 from app.core.query_cache import QueryCache, decode_user_id, normalize_question
+from tests.core._fake_pool import FakePool
 
 
 def _fake_jwt(payload: dict) -> str:
@@ -34,32 +35,9 @@ def test_decode_user_id_returns_none_when_sub_is_missing():
     assert decode_user_id(token) is None
 
 
-class _FakePool:
-    """Stands in for `asyncpg.Pool` -- records every call so tests can assert on the exact SQL
-    parameters without a real Postgres connection."""
-
-    def __init__(self, fetchrow_result=None, fetch_result=None):
-        self.fetchrow_result = fetchrow_result
-        self.fetch_result = fetch_result or []
-        self.fetchrow_calls: list[tuple] = []
-        self.execute_calls: list[tuple] = []
-        self.fetch_calls: list[tuple] = []
-
-    async def fetchrow(self, query, *args):
-        self.fetchrow_calls.append((query, args))
-        return self.fetchrow_result
-
-    async def execute(self, query, *args):
-        self.execute_calls.append((query, args))
-
-    async def fetch(self, query, *args):
-        self.fetch_calls.append((query, args))
-        return self.fetch_result
-
-
 @pytest.mark.asyncio
 async def test_lookup_returns_none_on_a_miss():
-    pool = _FakePool(fetchrow_result=None)
+    pool = FakePool(fetchrow_result=None)
     cache = QueryCache(pool)
     result = await cache.lookup("user-1", "agentic", "What is X?")
     assert result is None
@@ -67,7 +45,7 @@ async def test_lookup_returns_none_on_a_miss():
 
 @pytest.mark.asyncio
 async def test_lookup_scopes_by_user_mode_and_normalized_question():
-    pool = _FakePool(fetchrow_result=None)
+    pool = FakePool(fetchrow_result=None)
     cache = QueryCache(pool)
     await cache.lookup("user-1", "agentic", "  What IS X?  ")
     _query, args = pool.fetchrow_calls[0]
@@ -86,7 +64,7 @@ async def test_lookup_parses_a_cache_hit_row():
         "trace": [{"agent": "gatekeeper", "route": "kb"}],
         "source_filename": None,
     }
-    pool = _FakePool(fetchrow_result=row)
+    pool = FakePool(fetchrow_result=row)
     cache = QueryCache(pool)
     result = await cache.lookup("user-1", "agentic", "What is the capital of France?")
     assert result is not None
@@ -105,7 +83,7 @@ async def test_lookup_parses_trace_stored_as_a_json_string():
         "trace": json.dumps([{"agent": "writer", "text": "x"}]),
         "source_filename": None,
     }
-    pool = _FakePool(fetchrow_result=row)
+    pool = FakePool(fetchrow_result=row)
     cache = QueryCache(pool)
     result = await cache.lookup("user-1", "agentic", "x")
     assert result is not None
@@ -114,7 +92,7 @@ async def test_lookup_parses_trace_stored_as_a_json_string():
 
 @pytest.mark.asyncio
 async def test_record_inserts_with_the_normalized_question_and_given_fields():
-    pool = _FakePool()
+    pool = FakePool()
     cache = QueryCache(pool)
     await cache.record(
         user_id="user-1",
@@ -150,7 +128,7 @@ async def test_list_recent_returns_entries_newest_first_order_preserved():
             "created_at": datetime(2026, 10, 4, 12, 0, tzinfo=UTC),
         }
     ]
-    pool = _FakePool(fetch_result=rows)
+    pool = FakePool(fetch_result=rows)
     cache = QueryCache(pool)
     entries = await cache.list_recent("user-1", limit=5)
     assert len(entries) == 1
@@ -161,9 +139,31 @@ async def test_list_recent_returns_entries_newest_first_order_preserved():
 
 @pytest.mark.asyncio
 async def test_list_recent_scopes_by_user_id_and_passes_the_limit():
-    pool = _FakePool(fetch_result=[])
+    pool = FakePool(fetch_result=[])
     cache = QueryCache(pool)
     await cache.list_recent("user-1", limit=5)
     _query, args = pool.fetch_calls[0]
     assert args[0] == "user-1"
     assert args[1] == 5
+
+
+@pytest.mark.asyncio
+async def test_lookup_sets_the_tenant_scoping_session_variable():
+    """AGT-059: every query runs with `app.current_user_id` set as a transaction-local Postgres
+    session variable, for the RLS policy to filter on -- the application-level WHERE clause isn't
+    the only thing standing between one user's row and another's."""
+    pool = FakePool(fetchrow_result=None)
+    cache = QueryCache(pool)
+    await cache.lookup("user-1", "agentic", "What is X?")
+    assert pool.set_config_calls == [("user-1",)]
+
+
+@pytest.mark.asyncio
+async def test_record_sets_the_tenant_scoping_session_variable():
+    pool = FakePool()
+    cache = QueryCache(pool)
+    await cache.record(
+        user_id="user-1", mode="direct", question="x", answer="x", refused=False, trace=[],
+        source_filename=None, duration_seconds=1.0, served_from_cache=False,
+    )
+    assert pool.set_config_calls == [("user-1",)]
