@@ -560,3 +560,140 @@ def test_documents_endpoint_surfaces_expired_session_as_401():
 
     assert response.status_code == 401
     assert "expired" in response.json()["detail"]
+
+
+# AGT-056/057: secret-leak and abusive-content guardrails.
+
+
+def test_query_direct_endpoint_refuses_a_flagged_query_without_calling_run_direct_query():
+    async def fake_run_direct_query(client, query):
+        raise AssertionError("should not run retrieval for a flagged query")
+
+    with patch("app.api.router.run_direct_query", fake_run_direct_query):
+        client = TestClient(app)
+        response = client.post(
+            "/query/direct", json={"query": "How to make a bomb at home"}, headers=_AUTH_HEADERS
+        )
+
+    assert response.status_code == 200
+    assert response.json()["text"] is None
+
+
+def test_query_direct_endpoint_refuses_a_result_containing_a_secret():
+    from app.agents.direct_query import DirectQueryResult
+
+    async def fake_run_direct_query(client, query):
+        return DirectQueryResult(text="Here is the key: AKIAIOSFODNN7EXAMPLE", source_filename="leaked.pdf")
+
+    with patch("app.api.router.run_direct_query", fake_run_direct_query):
+        client = TestClient(app)
+        response = client.post(
+            "/query/direct", json={"query": "What is the API key?"}, headers=_AUTH_HEADERS
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["text"] is None
+    assert body["source_filename"] is None
+
+
+def test_query_endpoint_refuses_a_flagged_query_without_calling_get_graph():
+    fake_graph = MagicMock()
+    fake_graph.astream = MagicMock(side_effect=AssertionError("graph should not run for a flagged query"))
+
+    with patch("app.api.router.get_graph", return_value=fake_graph):
+        client = TestClient(app)
+        response = client.post(
+            "/query", json={"query": "How to make a bomb at home"}, headers=_AUTH_HEADERS
+        )
+
+    assert response.status_code == 200
+    assert '"refused": true' in response.text
+
+
+def test_query_endpoint_refuses_a_result_containing_a_secret():
+    gatekeeper_state = {"final_answer": None, "refused": False, "trace": [{"agent": "gatekeeper", "route": "kb"}]}
+    verifier_state = {
+        "final_answer": "Here is the key: AKIAIOSFODNN7EXAMPLE",
+        "refused": False,
+        "trace": [gatekeeper_state["trace"][0], {"agent": "verifier", "grounded": True}],
+    }
+    fake_graph = _graph([{"gatekeeper": gatekeeper_state}, {"verifier": verifier_state}])
+
+    with patch("app.api.router.get_graph", return_value=fake_graph):
+        client = TestClient(app)
+        response = client.post("/query", json={"query": "What is the API key?"}, headers=_AUTH_HEADERS)
+
+    assert response.status_code == 200
+    assert '"final_answer": null' in response.text
+    assert '"refused": true' in response.text
+
+
+# AGT-058: per-user rate limiting.
+
+
+class _FakeRateLimiter:
+    def __init__(self, allowed: bool):
+        self.allowed = allowed
+        self.calls: list[str] = []
+
+    async def check_and_record(self, user_id: str) -> bool:
+        self.calls.append(user_id)
+        return self.allowed
+
+
+def test_query_direct_endpoint_returns_429_when_rate_limited():
+    fake_limiter = _FakeRateLimiter(allowed=False)
+
+    async def fake_run_direct_query(client, query):
+        raise AssertionError("should not run retrieval when rate-limited")
+
+    with (
+        patch("app.api.router.run_direct_query", fake_run_direct_query),
+        patch("app.api.router.get_rate_limiter", AsyncMock(return_value=fake_limiter)),
+    ):
+        client = TestClient(app)
+        response = client.post(
+            "/query/direct", json={"query": "What is the capital of France?"}, headers=_CACHE_AUTH_HEADERS
+        )
+
+    assert response.status_code == 429
+    assert fake_limiter.calls == ["user-abc"]
+
+
+def test_query_direct_endpoint_proceeds_when_under_the_rate_limit():
+    from app.agents.direct_query import DirectQueryResult
+
+    fake_limiter = _FakeRateLimiter(allowed=True)
+
+    async def fake_run_direct_query(client, query):
+        return DirectQueryResult(text="Paris.", source_filename="geo.pdf")
+
+    with (
+        patch("app.api.router.run_direct_query", fake_run_direct_query),
+        patch("app.api.router.get_rate_limiter", AsyncMock(return_value=fake_limiter)),
+    ):
+        client = TestClient(app)
+        response = client.post(
+            "/query/direct", json={"query": "What is the capital of France?"}, headers=_CACHE_AUTH_HEADERS
+        )
+
+    assert response.status_code == 200
+
+
+def test_query_endpoint_returns_429_when_rate_limited():
+    fake_limiter = _FakeRateLimiter(allowed=False)
+    fake_graph = MagicMock()
+    fake_graph.astream = MagicMock(side_effect=AssertionError("should not build/run the graph when rate-limited"))
+
+    with (
+        patch("app.api.router.get_graph", return_value=fake_graph),
+        patch("app.api.router.get_rate_limiter", AsyncMock(return_value=fake_limiter)),
+    ):
+        client = TestClient(app)
+        response = client.post(
+            "/query", json={"query": "What is the capital of France?"}, headers=_CACHE_AUTH_HEADERS
+        )
+
+    assert response.status_code == 429
+    assert fake_limiter.calls == ["user-abc"]
