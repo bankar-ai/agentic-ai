@@ -78,4 +78,13 @@ class RagPlatformRetrievalClient:
                 "X-CSRF-Token": csrf_token,
                 "Cookie": f"access_token={access_token}; csrf_token={csrf_token}",
             },
+            # AGT-054: overrides the shared client's default 30s timeout (app/rag_client/
+            # shared_client.py) -- the embedding call this triggers can hit a cold Modal
+            # container, documented (enterprise-rag-platform's own ERP-037 session notes) to take
+            # 52-59s on a cold start. A 30s timeout guaranteed failure on exactly that case, not
+            # just occasional bad luck -- confirmed live, two consecutive real timeouts followed
+            # by a success at duration_seconds: 54.93. Only this one call site gets the longer
+            # timeout; login/documents calls don't hit Modal and shouldn't wait this long on a
+            # genuine outage.
+            timeout=90.0,
         )
