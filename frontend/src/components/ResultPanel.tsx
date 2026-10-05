@@ -2,6 +2,9 @@ import type { TraceStep } from "../api";
 import { TraceStepper } from "./TraceStepper";
 
 export interface DisplayResult {
+  /** AGT-048: the question that produced this result -- without it, nothing ties a displayed
+   * answer (live or reopened from history, AGT-040) back to what was actually asked. */
+  question: string;
   mode: "agentic" | "direct";
   trace: TraceStep[];
   answer: string;
@@ -24,6 +27,7 @@ export function formatDuration(seconds: number | null): string {
 export function ResultPanel({ result }: { result: DisplayResult }) {
   return (
     <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+      <p className="mb-2 text-sm font-semibold text-slate-500">{result.question}</p>
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-700">
           {result.mode === "agentic" ? "Agentic RAG" : "Direct RAG"}
