@@ -57,7 +57,16 @@ def build_graph(
                 mcp_server_command, state["gatekeeper_decision"], state["query"], state.get("user_session")
             )
         state["evidence"] = result.evidence
-        step = {"agent": "research", "evidence_count": len(result.evidence)}
+        # AGT-046: `source`/`citation` only (knowledge_base -> the real source filename, web ->
+        # the real URL -- both confirmed in app/agents/research.py and app/agents/web_search.py)
+        # -- never the full `text`, which the Writer's draft already quotes/paraphrases. Without
+        # this, there was genuinely no way to see which documents or URLs were actually used,
+        # not even for the Verifier's own "grounded" claim to point back to.
+        step = {
+            "agent": "research",
+            "evidence_count": len(result.evidence),
+            "citations": [{"source": e.source, "citation": e.citation} for e in result.evidence],
+        }
         state["trace"].append(step)
         tracer.trace_step(step)
         return state
@@ -66,7 +75,11 @@ def build_graph(
         with otel_tracer.start_as_current_span("writer_node"):
             draft = await write_answer(model, state["query"], state["evidence"])
         state["draft"] = draft
-        step = {"agent": "writer", "text": draft.text}
+        step = {
+            "agent": "writer",
+            "text": draft.text,
+            "citations": [{"source": e.source, "citation": e.citation} for e in draft.cited_evidence],
+        }
         state["trace"].append(step)
         tracer.trace_step(step)
         return state

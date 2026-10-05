@@ -116,3 +116,24 @@ async def test_graph_refuse_route_skips_research_and_writer():
         final_state = await graph.ainvoke(_initial_state("What is your favorite color?"))
 
     assert final_state["refused"] is True
+
+
+@pytest.mark.asyncio
+async def test_research_and_writer_nodes_trace_citations():
+    """AGT-046: before this, the trace only ever carried `evidence_count`/`text` -- no way to see
+    which documents or URLs were actually used, not even for the Verifier's "grounded" claim to
+    point back to."""
+    web_evidence = [Evidence(text="A city in France.", source="web", citation="https://example.com/paris")]
+    with (
+        patch("app.graph.build.grade_retrieval", AsyncMock(return_value=GatekeeperDecision(route="kb", reasoning="ok"))),
+        patch("app.graph.build.research", AsyncMock(return_value=AsyncMock(evidence=web_evidence))),
+        patch("app.graph.build.write_answer", AsyncMock(return_value=DraftAnswer(text="Paris.", cited_evidence=web_evidence))),
+        patch("app.graph.build.verify_answer", AsyncMock(return_value=VerificationResult(grounded=True, unsupported_claims=[], reasoning="ok"))),
+    ):
+        graph = build_graph(model=MagicMock(), retrieval_client=MagicMock(), mcp_server_command=[], max_retries=2)
+        final_state = await graph.ainvoke(_initial_state("Where is Paris?"))
+
+    research_step = next(s for s in final_state["trace"] if s["agent"] == "research")
+    writer_step = next(s for s in final_state["trace"] if s["agent"] == "writer")
+    assert research_step["citations"] == [{"source": "web", "citation": "https://example.com/paris"}]
+    assert writer_step["citations"] == [{"source": "web", "citation": "https://example.com/paris"}]

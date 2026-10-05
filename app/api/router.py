@@ -161,14 +161,27 @@ async def _event_stream(
             for node_state in chunk.values():
                 final_state = node_state
                 yield _format_sse("step", node_state["trace"][-1])
-    except (RagPlatformRetrievalError, RagPlatformAuthError) as exc:
+    except RagPlatformAuthError:
+        # AGT-052: a session that expired or was rejected mid-query is a *specific*, expected
+        # condition (StaticTokenAuth.refresh() raises exactly this when it can't silently renew a
+        # caller-supplied token) -- distinct from a genuine outage, and the frontend needs to tell
+        # them apart to show "please log in again" instead of a generic failure. No stack trace
+        # logged: this isn't a bug, just an expected rejection.
+        record_query_outcome("error")
+        record_query_duration("error", "agentic", time.monotonic() - start_time)
+        yield _format_sse("error", {
+            "type": "RagPlatformAuthError",
+            "message": "Your enterprise-rag-platform session has expired. Please log in again.",
+        })
+        return
+    except RagPlatformRetrievalError as exc:
         # Upstream response bodies stay in the server log, not in the client-facing message.
         logger.exception("RAG platform unavailable while answering query")
         record_query_outcome("error")
         record_query_duration("error", "agentic", time.monotonic() - start_time)
         yield _format_sse("error", {
             "type": type(exc).__name__,
-            "message": "The knowledge base (enterprise-rag-platform) is unavailable or rejected authentication.",
+            "message": "The knowledge base (enterprise-rag-platform) is unavailable.",
         })
         return
     except KnowledgeBaseUnavailable:
@@ -273,7 +286,14 @@ async def documents(
     client = RagPlatformDocumentsClient(settings.rag_platform_base_url, auth, get_shared_rag_platform_client())
     try:
         return await client.list_documents(limit=limit, offset=offset)
-    except (RagPlatformDocumentsError, RagPlatformAuthError) as exc:
+    except RagPlatformAuthError:
+        # AGT-052: a specific, expected condition (expired/rejected session) -- 401, not 502, so
+        # the frontend's existing `response.status === 401` handling catches it correctly.
+        raise HTTPException(
+            status_code=401,
+            detail="Your enterprise-rag-platform session has expired. Please log in again.",
+        ) from None
+    except RagPlatformDocumentsError as exc:
         raise HTTPException(status_code=502, detail=f"enterprise-rag-platform is unavailable: {exc}") from None
 
 
@@ -328,7 +348,15 @@ async def query_direct(
     start_time = time.monotonic()
     try:
         result = await run_direct_query(client, request.query)
-    except (RagPlatformRetrievalError, RagPlatformAuthError) as exc:
+    except RagPlatformAuthError:
+        # AGT-052: a specific, expected condition (expired/rejected session) -- 401, not 502, so
+        # the frontend's existing `response.status === 401` handling catches it correctly.
+        record_query_duration("error", "direct", time.monotonic() - start_time)
+        raise HTTPException(
+            status_code=401,
+            detail="Your enterprise-rag-platform session has expired. Please log in again.",
+        ) from None
+    except RagPlatformRetrievalError as exc:
         record_query_duration("error", "direct", time.monotonic() - start_time)
         raise HTTPException(status_code=502, detail=f"enterprise-rag-platform is unavailable: {exc}") from None
     duration_seconds = time.monotonic() - start_time

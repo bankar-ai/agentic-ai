@@ -481,3 +481,78 @@ def test_history_endpoint_returns_empty_list_when_token_has_no_sub_claim():
 
     assert response.status_code == 200
     assert response.json() == []
+
+
+# AGT-052: an expired/rejected session (RagPlatformAuthError) must surface as 401 with a
+# "log in again" message, distinct from a genuine outage (RagPlatformRetrievalError/
+# RagPlatformDocumentsError -> 502) -- previously both were caught in the same except clause and
+# flattened into an indistinguishable 502, so the frontend's existing 401-triggered logout flow
+# never fired for the actual common case (a token that simply expired).
+
+
+def test_query_endpoint_surfaces_expired_session_as_a_distinct_sse_error():
+    from app.rag_client.auth import RagPlatformAuthError
+
+    fake_graph = _graph(raises=RagPlatformAuthError("Supplied session expired or was rejected; please log in again."))
+
+    with patch("app.api.router.get_graph", return_value=fake_graph):
+        client = TestClient(app)
+        response = client.post("/query", json={"query": "What is the capital of France?"}, headers=_AUTH_HEADERS)
+
+    assert response.status_code == 200
+    assert "event: error" in response.text
+    assert "RagPlatformAuthError" in response.text
+    assert "expired" in response.text
+    # Distinct from a genuine outage's message -- never says "unavailable" for this case.
+    assert "unavailable" not in response.text
+
+
+def test_query_endpoint_still_surfaces_a_genuine_outage_as_retrieval_error():
+    fake_graph = _graph(raises=RagPlatformRetrievalError("connection refused"))
+
+    with patch("app.api.router.get_graph", return_value=fake_graph):
+        client = TestClient(app)
+        response = client.post("/query", json={"query": "What is the capital of France?"}, headers=_AUTH_HEADERS)
+
+    assert "RagPlatformRetrievalError" in response.text
+    assert "unavailable" in response.text
+    assert "expired" not in response.text
+
+
+def test_query_direct_endpoint_surfaces_expired_session_as_401():
+    from app.rag_client.auth import RagPlatformAuthError
+
+    async def fake_run_direct_query(client, query):
+        raise RagPlatformAuthError("Supplied session expired or was rejected; please log in again.")
+
+    with patch("app.api.router.run_direct_query", fake_run_direct_query):
+        client = TestClient(app)
+        response = client.post("/query/direct", json={"query": "What is the capital of France?"}, headers=_AUTH_HEADERS)
+
+    assert response.status_code == 401
+    assert "expired" in response.json()["detail"]
+
+
+def test_query_direct_endpoint_still_surfaces_a_genuine_outage_as_502():
+    async def fake_run_direct_query(client, query):
+        raise RagPlatformRetrievalError("connection refused")
+
+    with patch("app.api.router.run_direct_query", fake_run_direct_query):
+        client = TestClient(app)
+        response = client.post("/query/direct", json={"query": "What is the capital of France?"}, headers=_AUTH_HEADERS)
+
+    assert response.status_code == 502
+
+
+def test_documents_endpoint_surfaces_expired_session_as_401():
+    from app.rag_client.auth import RagPlatformAuthError
+
+    async def fake_list_documents(self, limit=50, offset=0):
+        raise RagPlatformAuthError("Supplied session expired or was rejected; please log in again.")
+
+    with patch("app.rag_client.documents.RagPlatformDocumentsClient.list_documents", fake_list_documents):
+        client = TestClient(app)
+        response = client.get("/documents", headers=_AUTH_HEADERS)
+
+    assert response.status_code == 401
+    assert "expired" in response.json()["detail"]
