@@ -22,6 +22,8 @@ stdio by the Research agent — a genuine protocol round-trip, not a direct func
 
 ## Architecture Diagram
 
+System-level view (clients, service, data and external services, observability): `docs/diagrams/system-flow.svg`, also shown in the README. The diagram below zooms into the service and the agent graph.
+
 As of `AGT-004`/`AGT-006`/`AGT-013`/`AGT-014`, every piece below is built and live — there is no
 longer a planned/not-yet-built tier. Auth is **mandatory**, not optional: there is no
 anonymous/service-account fallback, so a caller must bring their own `enterprise-rag-platform`
@@ -103,10 +105,12 @@ future **LLMOps & Evaluation Platform** and **PEFT/LoRA** project. Shared cross-
 | Structured I/O | PydanticAI |
 | Tool protocol | MCP (`search_knowledge_base`, wrapping `enterprise-rag-platform`'s retrieval API) |
 | Backend | FastAPI, Server-Sent Events |
+| Frontend | React + TypeScript (Vite, Tailwind) on Vercel |
 | Demo UI | Gradio (two tabs: Direct RAG vs. Agentic RAG) |
+| Database | Neon Postgres (`query_history`: query cache and audit log), optional |
 | LLM inference (local dev) | Ollama — see "Known model-reliability gap" below |
-| LLM inference (deployment) | OpenRouter (planned — `AGT-004`; local Ollama isn't viable on the deployment target, see "Deployment") |
-| Evaluation/tracing | Langfuse Cloud (Hobby tier), sharing `enterprise-rag-platform`'s account once `ERP-112` lands there; no-op fallback when unconfigured |
+| LLM inference (deployment) | OpenRouter (live; local Ollama isn't viable on the deployment target, see "Deployment") |
+| Evaluation/tracing | Langfuse Cloud (dedicated `agentic-ai` project; no-op fallback when unconfigured), plus OpenTelemetry to Grafana Cloud |
 | Testing | Pytest, ruff, mypy |
 
 ## Known Model-Reliability Gap
