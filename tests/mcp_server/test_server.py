@@ -50,7 +50,8 @@ async def test_search_knowledge_base_empty_results():
     assert result == []
 
 
-def test_build_auth_uses_static_token_when_session_set():
+@pytest.mark.asyncio
+async def test_build_auth_uses_static_token_when_session_set():
     settings = Settings(
         rag_platform_base_url="http://localhost:8000",
         rag_platform_email="svc@example.com",
@@ -59,12 +60,13 @@ def test_build_auth_uses_static_token_when_session_set():
         rag_platform_csrf_token="user-supplied-csrf",
     )
 
-    auth = _build_auth(settings, MagicMock(spec=httpx.AsyncClient))
+    auth = await _build_auth(settings, MagicMock(spec=httpx.AsyncClient))
 
     assert isinstance(auth, StaticTokenAuth)
 
 
-def test_build_auth_falls_back_to_service_account_when_only_access_token_set():
+@pytest.mark.asyncio
+async def test_build_auth_falls_back_to_service_account_when_only_access_token_set():
     """Both-or-neither: a partial session (e.g. a missing CSRF token) must not be treated as
     a usable per-user session."""
     settings = Settings(
@@ -74,19 +76,20 @@ def test_build_auth_falls_back_to_service_account_when_only_access_token_set():
         rag_platform_access_token="user-supplied-token",
     )
 
-    auth = _build_auth(settings, MagicMock(spec=httpx.AsyncClient))
+    auth = await _build_auth(settings, MagicMock(spec=httpx.AsyncClient))
 
     assert isinstance(auth, RagPlatformAuth)
 
 
-def test_build_auth_falls_back_to_service_account_when_no_access_token():
+@pytest.mark.asyncio
+async def test_build_auth_falls_back_to_service_account_when_no_access_token():
     settings = Settings(
         rag_platform_base_url="http://localhost:8000",
         rag_platform_email="svc@example.com",
         rag_platform_password="secret123",
     )
 
-    auth = _build_auth(settings, MagicMock(spec=httpx.AsyncClient))
+    auth = await _build_auth(settings, MagicMock(spec=httpx.AsyncClient))
 
     assert isinstance(auth, RagPlatformAuth)
 
@@ -95,7 +98,9 @@ def test_build_auth_falls_back_to_service_account_when_no_access_token():
 async def test_close_retrieval_client_closes_and_clears_cache_when_one_was_built(monkeypatch):
     """AGT-009/AGT-012: the cached client's one connection must actually be closed on process
     exit, and closing when nothing was ever built must not error."""
-    _get_retrieval_client.cache_clear()
+    import app.mcp_server.server as server_module
+
+    server_module._client = None
     monkeypatch.setenv("RAG_PLATFORM_BASE_URL", "http://rag.test")
     monkeypatch.setenv("RAG_PLATFORM_EMAIL", "svc@example.com")
     monkeypatch.setenv("RAG_PLATFORM_PASSWORD", "secret123")
@@ -105,10 +110,10 @@ async def test_close_retrieval_client_closes_and_clears_cache_when_one_was_built
 
     await _close_retrieval_client()  # nothing built yet -- must be a no-op, not an error
 
-    client = _get_retrieval_client()
+    client = await _get_retrieval_client()
     assert client._http.is_closed is False
 
     await _close_retrieval_client()
 
     assert client._http.is_closed is True
-    assert _get_retrieval_client.cache_info().currsize == 0
+    assert server_module._client is None

@@ -4,12 +4,12 @@ tool. Run standalone via `python -m app.mcp_server.server` (stdio transport); th
 """
 
 import asyncio
-from functools import lru_cache
 
 import httpx
 from mcp.server.mcpserver import MCPServer
 
 from app.core.config import Settings, get_settings
+from app.core.session_store import get_session_store
 from app.rag_client.auth import (
     RagPlatformAuth,
     RagPlatformAuthProvider,
@@ -35,29 +35,42 @@ async def _search_knowledge_base_impl(
     ]
 
 
-def _build_auth(settings: Settings, http_client: httpx.AsyncClient) -> RagPlatformAuthProvider:
+async def _build_auth(settings: Settings, http_client: httpx.AsyncClient) -> RagPlatformAuthProvider:
     """AGT-013: a per-user session (forwarded via RAG_PLATFORM_ACCESS_TOKEN/CSRF_TOKEN env) takes
     priority over the fixed service account, so this subprocess retrieves as the end user when
     one is logged in, and as the configured service account otherwise.
+
+    AGT-051: `DATABASE_URL` is also forwarded to this subprocess (`app/agents/research.py`'s
+    `_FORWARDED_ENV_PREFIXES`) so the `kb`-route path -- the dominant real retrieval path -- gets
+    the same silent-refresh capability as the endpoints that call `RagPlatformRetrievalClient`
+    directly, not just `/query/direct`/`/documents`.
     """
     if settings.rag_platform_access_token and settings.rag_platform_csrf_token:
-        return StaticTokenAuth(settings.rag_platform_access_token, settings.rag_platform_csrf_token)
+        session_store = await get_session_store(settings.database_url)
+        return StaticTokenAuth(
+            settings.rag_platform_access_token, settings.rag_platform_csrf_token, session_store, http_client
+        )
     return RagPlatformAuth(
         settings.rag_platform_base_url, settings.rag_platform_email, settings.rag_platform_password, http_client
     )
 
 
-def _build_retrieval_client() -> RagPlatformRetrievalClient:
+async def _build_retrieval_client() -> RagPlatformRetrievalClient:
     settings = get_settings()
     http_client = httpx.AsyncClient(base_url=settings.rag_platform_base_url, timeout=30.0)
-    auth = _build_auth(settings, http_client)
+    auth = await _build_auth(settings, http_client)
     return RagPlatformRetrievalClient(settings.rag_platform_base_url, auth, http_client)
 
 
-@lru_cache
-def _get_retrieval_client() -> RagPlatformRetrievalClient:
+_client: RagPlatformRetrievalClient | None = None
+
+
+async def _get_retrieval_client() -> RagPlatformRetrievalClient:
     """Lazily construct and cache the retrieval client for this subprocess's one lifetime."""
-    return _build_retrieval_client()
+    global _client
+    if _client is None:
+        _client = await _build_retrieval_client()
+    return _client
 
 
 async def _close_retrieval_client() -> None:
@@ -65,9 +78,10 @@ async def _close_retrieval_client() -> None:
     this subprocess is short-lived (spawned fresh per Research call), but was never explicitly
     cleaning up its one connection.
     """
-    if _get_retrieval_client.cache_info().currsize:
-        await _get_retrieval_client().aclose()
-    _get_retrieval_client.cache_clear()
+    global _client
+    if _client is not None:
+        await _client.aclose()
+    _client = None
 
 
 @mcp_server.tool()
@@ -79,7 +93,7 @@ async def search_knowledge_base(
     Each result has `text`, `source_filename`, `section_path`, and a fused relevance `score`
     in (0, 1]. Returns an empty list, not an error, when nothing relevant is found.
     """
-    return await _search_knowledge_base_impl(_get_retrieval_client(), query, top_k, rerank, expand_sections)
+    return await _search_knowledge_base_impl(await _get_retrieval_client(), query, top_k, rerank, expand_sections)
 
 
 async def _run() -> None:

@@ -30,6 +30,7 @@ from app.core.query_metrics import (
     record_query_outcome,
     record_retry_count,
 )
+from app.core.session_store import SessionStore, get_session_store
 from app.core.tracing import get_tracer
 from app.graph.build import build_graph
 from app.rag_client.auth import RagPlatformAuthError, StaticTokenAuth
@@ -68,13 +69,17 @@ router = APIRouter(tags=["query"])
 MCP_SERVER_COMMAND = [sys.executable, "-m", "app.mcp_server.server"]
 
 
-def get_graph(user_session: UserSession):
+def get_graph(user_session: UserSession, session_store: SessionStore | None = None):
     """Build the compiled orchestration graph from current settings, scoped to `user_session`.
 
     `user_session` (AGT-013/AGT-006): a logged-in end user's RAG-platform session. There is no
     anonymous/service-account fallback -- every query runs as a real `enterprise-rag-platform`
     account, via `StaticTokenAuth`. The Gatekeeper's own exploratory search and Research's MCP
     subprocess call both use this same identity (see `app/graph/build.py`'s `research_node`).
+
+    `session_store` (AGT-051, optional): when provided, `StaticTokenAuth` can silently refresh an
+    expired session instead of failing -- plain `get_graph(user_session)` (every existing test's
+    call shape) keeps the pre-AGT-051 "no silent refresh" behavior.
 
     A thin, separately-mockable seam: tests patch this function rather than the graph internals.
     """
@@ -89,7 +94,7 @@ def get_graph(user_session: UserSession):
     # AGT-009: one client reused across every request, not a fresh one per call -- safe only
     # because StaticTokenAuth no longer stores per-user state on it (see app/rag_client/auth.py).
     http_client = get_shared_rag_platform_client()
-    auth = StaticTokenAuth(user_session.access_token, user_session.csrf_token)
+    auth = StaticTokenAuth(user_session.access_token, user_session.csrf_token, session_store, http_client)
     retrieval_client = RagPlatformRetrievalClient(settings.rag_platform_base_url, auth, http_client)
     tracer = get_tracer(settings)
     return build_graph(model, retrieval_client, MCP_SERVER_COMMAND, settings.max_verification_retries, tracer)
@@ -282,7 +287,10 @@ async def documents(
             detail="Log in with your enterprise-rag-platform account (Authorization + X-RAG-CSRF-Token headers) to use this service.",
         )
     settings = get_settings()
-    auth = StaticTokenAuth(user_session.access_token, user_session.csrf_token)
+    session_store = await get_session_store(settings.database_url)
+    auth = StaticTokenAuth(
+        user_session.access_token, user_session.csrf_token, session_store, get_shared_rag_platform_client()
+    )
     client = RagPlatformDocumentsClient(settings.rag_platform_base_url, auth, get_shared_rag_platform_client())
     try:
         return await client.list_documents(limit=limit, offset=offset)
@@ -343,7 +351,10 @@ async def query_direct(
                 duration_seconds=0.0,
             )
 
-    auth = StaticTokenAuth(user_session.access_token, user_session.csrf_token)
+    session_store = await get_session_store(settings.database_url)
+    auth = StaticTokenAuth(
+        user_session.access_token, user_session.csrf_token, session_store, get_shared_rag_platform_client()
+    )
     client = RagPlatformRetrievalClient(settings.rag_platform_base_url, auth, get_shared_rag_platform_client())
     start_time = time.monotonic()
     try:
@@ -413,7 +424,8 @@ async def query(
     # actually triggers it is one lightweight GET, not an LLM call.
     if settings.llm_provider == "openrouter" and settings.openrouter_api_key:
         await maybe_record_openrouter_budget(settings.openrouter_api_key)
-    graph = get_graph(user_session)
+    session_store = await get_session_store(settings.database_url)
+    graph = get_graph(user_session, session_store)
     cache = await get_query_cache(settings.database_url)
     user_id = decode_user_id(user_session.access_token) if cache is not None else None
     return StreamingResponse(
