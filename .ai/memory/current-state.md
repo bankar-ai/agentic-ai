@@ -269,13 +269,40 @@ History belongs in `.ai/sessions/`, not here.
   screenshot/automation tool this session): click-to-reopen, mobile-width rendering, and
   same-tab live sync are confirmed by code review and build output, not an actual click or a real
   device -- worth the project owner's own click-through to fully close out.
+- **Nine more live-feedback fixes shipped (`AGT-045`-`054`, except `051`, 2026-10-05)**: project
+  owner clicked through the deployed app and flagged real issues, each confirmed against actual
+  code/logs before fixing, not assumed. Mode switch no longer leaves the other mode's stale
+  result on screen (`AGT-045`). Trace citations: `research_node`/`writer_node` now trace each
+  citation's real source filename or URL -- previously there was no way to see which documents
+  backed an answer, confirmed via a fresh live query returning real URLs the Verifier's own
+  reasoning referenced by name (`AGT-046`). Inline per-agent role descriptions (`AGT-047`).
+  Result panel now shows the question it's answering (`AGT-048`). Sidebar + bottom-anchored
+  chat-style layout, replacing the single centered column (`AGT-049`). Stale "this browser only"
+  history copy fixed on both the query page and `/about`, now that `AGT-041`/`044` made it false
+  (`AGT-050`). **A real live bug root-caused via `enterprise-rag-platform`'s own VM logs**
+  (`AGT-052`): an expired session's `401` from that platform was being flattened into a generic
+  `502` alongside genuine outages, so `AGT-026`'s entire "please log in again" flow never actually
+  fired for its main real-world trigger -- split the exception handling so it does now. Question
+  input clears after a successful query (`AGT-053`). **A second real bug found live** while
+  verifying `AGT-046` (`AGT-054`): the retrieval client's flat 30s timeout was shorter than
+  Modal's own documented cold-start window (52-59s, confirmed matching exactly on a live retry at
+  `duration_seconds: 54.93`) -- guaranteed failure on a cold container, not bad luck; given a 90s
+  per-call-site override. `AGT-051` (revisit refresh tokens now that a database exists) was
+  investigated to a definitive answer -- confirmed technically feasible by reading
+  `enterprise-rag-platform`'s own auth router directly (its refresh token is an `httpOnly` cookie,
+  which blocks browser JS but not a server-side HTTP client; `agentic-ai`'s own `RagPlatformAuth`
+  already does real refresh today for a different flow) -- but implementation deliberately not
+  started, since storing another platform's refresh token is a trust-model decision needing the
+  project owner's explicit go-ahead, not just an open technical path.
 
 ## Known Gaps / Follow-ups
 
 Tracked as tickets in `.ai/tickets/` rather than duplicated here in full — this section is a quick
 index, read the ticket for detail.
 
-Every `AGT-*` ticket (`001`-`044`) is resolved except `AGT-033` (Backlog, see below) — `AGT-019` is
+Every `AGT-*` ticket (`001`-`054`) is resolved except `AGT-033` (Backlog, see below) and `AGT-051`
+(investigation complete, implementation deliberately deferred pending explicit approval of a
+trust-model decision, see below) — `AGT-019` is
 **Won't Do** (see below), everything else **Done**. See each ticket for detail; `AGT-008`/`AGT-009`/`AGT-012` (2026-10-03/04) landed
 together with a real concurrency bug found and fixed along the way (`StaticTokenAuth` was unsafe
 to share across concurrent different-user requests); `AGT-011` (2026-10-04) added
