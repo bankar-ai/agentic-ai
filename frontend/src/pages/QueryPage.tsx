@@ -216,13 +216,62 @@ export function QueryPage() {
 
   const shownHistory = history.slice(0, MAX_ENTRIES_SHOWN);
 
+  // AGT-049: a persistent left sidebar (documents) + a right column with the mode header on top,
+  // scrollable content in the middle, and the question input anchored at the bottom -- matching
+  // enterprise-rag-platform's own ChatPage.tsx/Sidebar.tsx pattern instead of a single centered
+  // column that left most of a laptop screen's width unused. Stacks vertically (sidebar above the
+  // rest) below `md`; genuine mobile polish is AGT-042's follow-up, not solved here.
   return (
-    <div className="min-h-screen bg-slate-50">
-      <header className="border-b border-slate-200 bg-white px-4 py-3 sm:px-6">
-        <div className="mx-auto flex max-w-3xl flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
-          <div className="flex items-center justify-between sm:contents">
-            <span className="text-lg font-semibold text-slate-900">Agentic RAG Orchestration</span>
-            <div className="flex items-center gap-3 sm:order-3">
+    <div className="flex h-screen flex-col bg-slate-50 md:flex-row">
+      <aside className="shrink-0 overflow-y-auto border-b border-slate-200 bg-white p-4 md:w-72 md:border-r md:border-b-0">
+        <span className="mb-4 block text-lg font-semibold text-slate-900">Agentic RAG Orchestration</span>
+        <p className="mb-2 text-xs font-medium tracking-wide text-slate-400 uppercase">
+          Your documents {documents ? `(${documents.length})` : ""}
+        </p>
+        {documentsError && <p className="text-sm text-red-600">{documentsError}</p>}
+        {documents && documents.length === 0 && (
+          <p className="text-sm text-slate-500">
+            No documents yet -- ingest one on <code>enterprise-rag-platform</code> directly, then
+            come back here.
+          </p>
+        )}
+        {documents && documents.length > 0 && (
+          <ul className="divide-y divide-slate-100">
+            {documents.map((doc) => (
+              <li key={doc.documentId} className="flex items-center gap-2 py-1.5 text-sm">
+                <span className="shrink-0">{"\u{1F4C4}"}</span>
+                <span className="min-w-0 flex-1 truncate text-slate-700">{doc.filename}</span>
+                <span className="shrink-0 text-xs text-slate-400">
+                  {new Date(doc.createdAt).toLocaleDateString()}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </aside>
+
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        <header className="shrink-0 border-b border-slate-200 bg-white px-4 py-3 sm:px-6">
+          <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+            <nav className="flex items-center gap-1 overflow-x-auto" role="tablist" aria-label="Query mode">
+              {(["agentic", "direct"] as Mode[]).map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  role="tab"
+                  aria-selected={mode === m}
+                  onClick={() => handleModeChange(m)}
+                  className={`border-b-2 px-3 py-1.5 text-sm font-medium transition-colors ${
+                    mode === m
+                      ? "border-slate-900 text-slate-900"
+                      : "border-transparent text-slate-500 hover:text-slate-900"
+                  }`}
+                >
+                  {m === "agentic" ? "Agentic RAG" : "Direct RAG"}
+                </button>
+              ))}
+            </nav>
+            <div className="flex items-center gap-3">
               <Link
                 to="/about"
                 title="What is this?"
@@ -230,7 +279,7 @@ export function QueryPage() {
               >
                 ?
               </Link>
-              <span className="hidden truncate text-sm text-slate-500 sm:inline" title={session.email}>
+              <span className="truncate text-sm text-slate-500" title={session.email}>
                 {session.email}
               </span>
               <button
@@ -245,153 +294,108 @@ export function QueryPage() {
               </button>
             </div>
           </div>
-          <span className="truncate text-xs text-slate-500 sm:hidden" title={session.email}>
-            {session.email}
-          </span>
-          <nav className="flex items-center gap-1 overflow-x-auto sm:order-2" role="tablist" aria-label="Query mode">
-            {(["agentic", "direct"] as Mode[]).map((m) => (
-              <button
-                key={m}
-                type="button"
-                role="tab"
-                aria-selected={mode === m}
-                onClick={() => handleModeChange(m)}
-                className={`border-b-2 px-3 py-1.5 text-sm font-medium transition-colors ${
-                  mode === m
-                    ? "border-slate-900 text-slate-900"
-                    : "border-transparent text-slate-500 hover:text-slate-900"
-                }`}
-              >
-                {m === "agentic" ? "Agentic RAG" : "Direct RAG"}
-              </button>
-            ))}
-          </nav>
-        </div>
-      </header>
-
-      <main className="mx-auto max-w-3xl space-y-4 px-4 py-6 sm:px-6">
-        <p className="text-sm text-slate-500">
-          {mode === "agentic"
-            ? "Full pipeline: routes, retrieves, drafts, and verifies before answering."
-            : "Baseline: one retrieval pass, the top result shown as-is, no synthesis or verification."}
-        </p>
-
-        {expiryWarning && (
-          <p className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800">
-            Your session will expire soon -- finish your question, or you'll need to log in again
-            (your typed question will be saved for you).
+          <p className="mt-2 text-sm text-slate-500">
+            {mode === "agentic"
+              ? "Full pipeline: routes, retrieves, drafts, and verifies before answering."
+              : "Baseline: one retrieval pass, the top result shown as-is, no synthesis or verification."}
           </p>
-        )}
+        </header>
 
-        <details className="rounded-lg border border-slate-200 bg-white px-4 py-3">
-          <summary className="cursor-pointer text-sm font-medium text-slate-900">
-            Your documents {documents ? `(${documents.length})` : ""}
-          </summary>
-          {documentsError && <p className="mt-2 text-sm text-red-600">{documentsError}</p>}
-          {documents && documents.length === 0 && (
-            <p className="mt-2 text-sm text-slate-500">
-              No documents yet -- ingest one on <code>enterprise-rag-platform</code> directly, then
-              come back here.
+        <main className="flex-1 space-y-4 overflow-y-auto px-4 py-6 sm:px-6">
+          {expiryWarning && (
+            <p className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800">
+              Your session will expire soon -- finish your question, or you'll need to log in again
+              (your typed question will be saved for you).
             </p>
           )}
-          {documents && documents.length > 0 && (
+
+          {error && <p className="text-sm text-red-600">{error}</p>}
+
+          {result && <ResultPanel result={result} />}
+
+          <details className="rounded-lg border border-slate-200 bg-white px-4 py-3" open>
+            <summary className="flex cursor-pointer items-center justify-between text-sm font-medium text-slate-900">
+              <span>
+                {/* AGT-050: "this browser only" was accurate before AGT-041/044 added a
+                 * server-side history table synced across devices -- left as-is it actively
+                 * misleads. */}
+                Past questions ({shownHistory.length}
+                {history.length > shownHistory.length ? ` of ${history.length} stored` : ""})
+              </span>
+              {history.length > 0 && (
+                <button
+                  type="button"
+                  className="text-xs font-normal text-blue-600 underline hover:text-blue-800"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    handleClearHistory();
+                  }}
+                >
+                  Clear all
+                </button>
+              )}
+            </summary>
+            {shownHistory.length === 0 && <p className="mt-2 text-sm text-slate-500">No past questions yet.</p>}
             <ul className="mt-2 divide-y divide-slate-100">
-              {documents.map((doc) => (
-                <li key={doc.documentId} className="flex items-center gap-2 py-1.5 text-sm">
-                  <span className="shrink-0">{"\u{1F4C4}"}</span>
-                  <span className="min-w-0 flex-1 truncate text-slate-700">{doc.filename}</span>
-                  <span className="shrink-0 text-xs text-slate-400">
-                    {new Date(doc.createdAt).toLocaleDateString()}
-                  </span>
+              {shownHistory.map((entry) => (
+                <li key={entry.id}>
+                  <div
+                    className={`flex items-start justify-between gap-3 rounded-md px-2 py-2 ${
+                      selectedHistoryId === entry.id ? "bg-slate-100" : "hover:bg-slate-50"
+                    }`}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => handleOpenHistoryEntry(entry)}
+                      className="min-w-0 flex-1 text-left"
+                    >
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <strong className="truncate text-sm text-slate-900">{entry.question}</strong>
+                        <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600">
+                          {entry.mode === "direct" ? "Direct" : "Agentic"}
+                        </span>
+                        {entry.durationSeconds !== null && (
+                          <span className="text-xs text-slate-400">{formatDuration(entry.durationSeconds)}</span>
+                        )}
+                      </div>
+                      <p className="mt-0.5 truncate text-xs text-slate-500">{entry.answer}</p>
+                      <span className="text-xs text-slate-400">{new Date(entry.timestamp).toLocaleString()}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="shrink-0 text-xs text-blue-600 underline hover:text-blue-800"
+                      onClick={() => handleDeleteHistoryEntry(entry.id)}
+                    >
+                      Delete
+                    </button>
+                  </div>
                 </li>
               ))}
             </ul>
-          )}
-        </details>
+          </details>
+        </main>
 
-        <form onSubmit={handleSubmit} className="flex gap-2">
-          <input
-            type="text"
-            placeholder="Ask a question..."
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            required
-            className="flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-slate-500 focus:outline-none"
-          />
-          <button
-            type="submit"
-            disabled={loading}
-            className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-60"
-          >
-            {loading ? "Thinking..." : "Ask"}
-          </button>
-        </form>
-
-        {error && <p className="text-sm text-red-600">{error}</p>}
-
-        {result && <ResultPanel result={result} />}
-
-        <details className="rounded-lg border border-slate-200 bg-white px-4 py-3" open>
-          <summary className="flex cursor-pointer items-center justify-between text-sm font-medium text-slate-900">
-            <span>
-              {/* AGT-050: "this browser only" was accurate before AGT-041/044 added a server-side
-               * history table synced across devices -- left as-is it actively misleads. */}
-              Past questions ({shownHistory.length}
-              {history.length > shownHistory.length ? ` of ${history.length} stored` : ""})
-            </span>
-            {history.length > 0 && (
-              <button
-                type="button"
-                className="text-xs font-normal text-blue-600 underline hover:text-blue-800"
-                onClick={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  handleClearHistory();
-                }}
-              >
-                Clear all
-              </button>
-            )}
-          </summary>
-          {shownHistory.length === 0 && <p className="mt-2 text-sm text-slate-500">No past questions yet.</p>}
-          <ul className="mt-2 divide-y divide-slate-100">
-            {shownHistory.map((entry) => (
-              <li key={entry.id}>
-                <div
-                  className={`flex items-start justify-between gap-3 rounded-md px-2 py-2 ${
-                    selectedHistoryId === entry.id ? "bg-slate-100" : "hover:bg-slate-50"
-                  }`}
-                >
-                  <button
-                    type="button"
-                    onClick={() => handleOpenHistoryEntry(entry)}
-                    className="min-w-0 flex-1 text-left"
-                  >
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <strong className="truncate text-sm text-slate-900">{entry.question}</strong>
-                      <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600">
-                        {entry.mode === "direct" ? "Direct" : "Agentic"}
-                      </span>
-                      {entry.durationSeconds !== null && (
-                        <span className="text-xs text-slate-400">{formatDuration(entry.durationSeconds)}</span>
-                      )}
-                    </div>
-                    <p className="mt-0.5 truncate text-xs text-slate-500">{entry.answer}</p>
-                    <span className="text-xs text-slate-400">{new Date(entry.timestamp).toLocaleString()}</span>
-                  </button>
-                  <button
-                    type="button"
-                    className="shrink-0 text-xs text-blue-600 underline hover:text-blue-800"
-                    onClick={() => handleDeleteHistoryEntry(entry.id)}
-                  >
-                    Delete
-                  </button>
-                </div>
-              </li>
-            ))}
-          </ul>
-        </details>
-      </main>
+        <footer className="shrink-0 border-t border-slate-200 bg-white px-4 py-3 sm:px-6">
+          <form onSubmit={handleSubmit} className="flex gap-2">
+            <input
+              type="text"
+              placeholder="Ask a question..."
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              required
+              className="flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-slate-500 focus:outline-none"
+            />
+            <button
+              type="submit"
+              disabled={loading}
+              className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-60"
+            >
+              {loading ? "Thinking..." : "Ask"}
+            </button>
+          </form>
+        </footer>
+      </div>
     </div>
   );
 }
