@@ -14,7 +14,7 @@ refresh token is a trust-model decision, not just an engineering one.
 
 import asyncpg
 
-from app.core.db import get_pool
+from app.core.db import get_pool, tenant_scoped
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS user_sessions (
@@ -22,6 +22,14 @@ CREATE TABLE IF NOT EXISTS user_sessions (
     refresh_token TEXT NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- AGT-059: same database-level defense in depth as query_history -- see that table's schema for
+-- the full rationale (FORCE is required, fail-closed by construction).
+ALTER TABLE user_sessions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE user_sessions FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS user_sessions_tenant_isolation ON user_sessions;
+CREATE POLICY user_sessions_tenant_isolation ON user_sessions
+    USING (user_id = current_setting('app.current_user_id', true));
 """
 
 
@@ -32,23 +40,26 @@ class SessionStore:
     async def save_refresh_token(self, user_id: str, refresh_token: str) -> None:
         """Upsert -- a fresh login or a rotated refresh token both just replace whatever was
         stored, there is only ever one live refresh token per user."""
-        await self._pool.execute(
-            """
-            INSERT INTO user_sessions (user_id, refresh_token, updated_at)
-            VALUES ($1, $2, now())
-            ON CONFLICT (user_id) DO UPDATE SET refresh_token = $2, updated_at = now()
-            """,
-            user_id,
-            refresh_token,
-        )
+        async with tenant_scoped(self._pool, user_id) as conn:
+            await conn.execute(
+                """
+                INSERT INTO user_sessions (user_id, refresh_token, updated_at)
+                VALUES ($1, $2, now())
+                ON CONFLICT (user_id) DO UPDATE SET refresh_token = $2, updated_at = now()
+                """,
+                user_id,
+                refresh_token,
+            )
 
     async def get_refresh_token(self, user_id: str) -> str | None:
-        return await self._pool.fetchval("SELECT refresh_token FROM user_sessions WHERE user_id = $1", user_id)
+        async with tenant_scoped(self._pool, user_id) as conn:
+            return await conn.fetchval("SELECT refresh_token FROM user_sessions WHERE user_id = $1", user_id)
 
     async def delete(self, user_id: str) -> None:
         """Called when a stored refresh token turns out to be invalid/revoked server-side --
         no point keeping a dead credential around for the next attempt to fail on again."""
-        await self._pool.execute("DELETE FROM user_sessions WHERE user_id = $1", user_id)
+        async with tenant_scoped(self._pool, user_id) as conn:
+            await conn.execute("DELETE FROM user_sessions WHERE user_id = $1", user_id)
 
 
 _schema_ready = False

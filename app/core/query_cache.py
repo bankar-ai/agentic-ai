@@ -21,7 +21,7 @@ from datetime import UTC, datetime, timedelta
 import asyncpg
 from pydantic import BaseModel
 
-from app.core.db import get_pool
+from app.core.db import get_pool, tenant_scoped
 
 CACHE_TTL = timedelta(hours=24)
 
@@ -42,6 +42,18 @@ CREATE TABLE IF NOT EXISTS query_history (
 );
 CREATE INDEX IF NOT EXISTS query_history_cache_lookup
     ON query_history (user_id, mode, question_normalized, created_at DESC);
+
+-- AGT-059: database-level defense in depth, on top of (not instead of) every query's own
+-- `WHERE user_id = $1`. FORCE is required: without it, RLS policies are silently bypassed for
+-- the table owner role, which is exactly the role this app connects as -- making the policy
+-- cosmetic rather than enforced. Fail-closed: `current_setting(..., true)` returns NULL when
+-- app.current_user_id was never set for this transaction, and `user_id = NULL` is never true, so
+-- a query that somehow runs without `tenant_scoped` sees zero rows, not every user's rows.
+ALTER TABLE query_history ENABLE ROW LEVEL SECURITY;
+ALTER TABLE query_history FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS query_history_tenant_isolation ON query_history;
+CREATE POLICY query_history_tenant_isolation ON query_history
+    USING (user_id = current_setting('app.current_user_id', true));
 """
 
 
@@ -107,20 +119,21 @@ class QueryCache:
         never serve another user's cached answer regardless of how similar their questions are.
         """
         cutoff = datetime.now(UTC) - CACHE_TTL
-        row = await self._pool.fetchrow(
-            """
-            SELECT answer, refused, trace, source_filename
-            FROM query_history
-            WHERE user_id = $1 AND mode = $2 AND question_normalized = $3
-              AND refused = FALSE AND created_at > $4
-            ORDER BY created_at DESC
-            LIMIT 1
-            """,
-            user_id,
-            mode,
-            normalize_question(question),
-            cutoff,
-        )
+        async with tenant_scoped(self._pool, user_id) as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT answer, refused, trace, source_filename
+                FROM query_history
+                WHERE user_id = $1 AND mode = $2 AND question_normalized = $3
+                  AND refused = FALSE AND created_at > $4
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                user_id,
+                mode,
+                normalize_question(question),
+                cutoff,
+            )
         if row is None:
             return None
         trace = row["trace"]
@@ -136,17 +149,18 @@ class QueryCache:
         -- the server-side source of truth that makes two devices (or a second tab reading this
         instead of its own `localStorage`) agree on the same recent history, not just the one
         browser that happened to ask each question."""
-        rows = await self._pool.fetch(
-            """
-            SELECT question, answer, refused, mode, trace, source_filename, duration_seconds, created_at
-            FROM query_history
-            WHERE user_id = $1
-            ORDER BY created_at DESC
-            LIMIT $2
-            """,
-            user_id,
-            limit,
-        )
+        async with tenant_scoped(self._pool, user_id) as conn:
+            rows = await conn.fetch(
+                """
+                SELECT question, answer, refused, mode, trace, source_filename, duration_seconds, created_at
+                FROM query_history
+                WHERE user_id = $1
+                ORDER BY created_at DESC
+                LIMIT $2
+                """,
+                user_id,
+                limit,
+            )
         entries = []
         for row in rows:
             trace = row["trace"]
@@ -181,24 +195,25 @@ class QueryCache:
         table's double duty. Never raised to the caller: a history-write failure must not break
         the query response the user is actually waiting on (see call sites in `app/api/router.py`
         for the try/except wrapping this)."""
-        await self._pool.execute(
-            """
-            INSERT INTO query_history
-                (user_id, mode, question_normalized, question, answer, refused, trace,
-                 source_filename, duration_seconds, served_from_cache)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-            """,
-            user_id,
-            mode,
-            normalize_question(question),
-            question,
-            answer,
-            refused,
-            json.dumps(trace),
-            source_filename,
-            duration_seconds,
-            served_from_cache,
-        )
+        async with tenant_scoped(self._pool, user_id) as conn:
+            await conn.execute(
+                """
+                INSERT INTO query_history
+                    (user_id, mode, question_normalized, question, answer, refused, trace,
+                     source_filename, duration_seconds, served_from_cache)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                """,
+                user_id,
+                mode,
+                normalize_question(question),
+                question,
+                answer,
+                refused,
+                json.dumps(trace),
+                source_filename,
+                duration_seconds,
+                served_from_cache,
+            )
 
 
 _schema_ready = False
