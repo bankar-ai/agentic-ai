@@ -307,13 +307,25 @@ History belongs in `.ai/sessions/`, not here.
   timestamp matching the refresh call exactly, proving both the read path and the
   rotate-and-resave path work correctly. The 30-minute forced-logout warning (`AGT-026`) should
   no longer actually trigger for a logged-in user while their refresh token stays valid.
+- **`AGT-055` (2026-10-05, same day): idle-timeout logout, closing a gap `AGT-051` opened.** Making
+  access-token expiry silently self-heal server-side also quietly removed the only thing that ever
+  logged an inactive user out -- without it, a session could stay alive indefinitely (up to the
+  refresh token's real 30-day lifetime) even if the user walked away. Checked
+  `enterprise-rag-platform`'s own frontend for precedent rather than inventing a threshold: it
+  already has a 30-minute click/keydown idle tracker, purely client-side in its own bundle (its
+  backend's `/auth/refresh` has no idle logic at all -- confirmed in `app/auth/config.py`), so
+  `agentic-ai` never inherited it automatically since its backend calls that endpoint directly,
+  server-to-server. New `frontend/src/activityTracker.ts` mirrors that convention exactly.
+  `AGT-026`'s now-misleading "session will expire soon" warning (it would have fired without the
+  user ever actually needing to log in again, post-`AGT-051`) was replaced, not left running
+  alongside the new check -- `jwt.ts` deleted as fully dead code once its only caller was gone.
 
 ## Known Gaps / Follow-ups
 
 Tracked as tickets in `.ai/tickets/` rather than duplicated here in full — this section is a quick
 index, read the ticket for detail.
 
-Every `AGT-*` ticket (`001`-`054`) is resolved — `AGT-019` is
+Every `AGT-*` ticket (`001`-`055`) is resolved — `AGT-019` is
 **Won't Do** (see below), everything else **Done**. See each ticket for detail; `AGT-008`/`AGT-009`/`AGT-012` (2026-10-03/04) landed
 together with a real concurrency bug found and fixed along the way (`StaticTokenAuth` was unsafe
 to share across concurrent different-user requests); `AGT-011` (2026-10-04) added
