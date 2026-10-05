@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
   DocumentsError,
@@ -23,10 +23,8 @@ import {
   MAX_ENTRIES_SHOWN,
   type HistoryEntry,
 } from "../history";
-import { decodeJwtExpiry } from "../jwt";
+import { isIdleTimedOut, startActivityTracking } from "../activityTracker";
 import { useSession } from "../session";
-
-const EXPIRY_WARNING_WINDOW_MS = 5 * 60 * 1000; // AGT-026: warn 5 minutes before the token expires
 
 type Mode = "agentic" | "direct";
 
@@ -56,20 +54,34 @@ export function QueryPage() {
   );
   const [documentsError, setDocumentsError] = useState<string | null>(null);
   const [history, setHistory] = useState<HistoryEntry[]>(() => loadHistory());
-  const [expiryWarning, setExpiryWarning] = useState(false);
 
-  // AGT-026: re-checked every 30s rather than once, so the warning appears partway through a
-  // long-lived page visit, not only right after login.
+  // Read inside the idle-check interval below, which is only re-created when `session` changes
+  // -- without a ref, that closure would keep seeing whatever `query` was at session-start,
+  // not what's actually been typed since.
+  const queryRef = useRef(query);
+  useEffect(() => {
+    queryRef.current = query;
+  }, [query]);
+
+  // AGT-055: replaces AGT-026's access-token-expiry warning, which went stale the moment AGT-051
+  // made expiry invisible (the backend silently refreshes behind the scenes now, so that warning
+  // would fire without the user ever actually needing to log in again). Mirrors
+  // enterprise-rag-platform's own 30-minute idle-timeout convention instead -- real inactivity,
+  // not token expiry, is now the thing that should end a session. Re-checked every 30s, same
+  // cadence the old warning used.
   useEffect(() => {
     if (!session) return;
+    startActivityTracking();
     const check = () => {
-      const expiresAt = decodeJwtExpiry(session.accessToken);
-      setExpiryWarning(expiresAt !== null && expiresAt - Date.now() < EXPIRY_WARNING_WINDOW_MS);
+      if (isIdleTimedOut()) {
+        if (queryRef.current) saveDraftQuery(queryRef.current);
+        logout();
+        navigate("/");
+      }
     };
-    check();
     const interval = setInterval(check, 30_000);
     return () => clearInterval(interval);
-  }, [session]);
+  }, [session, logout, navigate]);
 
   // AGT-038: the cached list (if any) already rendered synchronously above -- this silently
   // revalidates against the live endpoint and updates the cache, without ever clearing existing
@@ -302,13 +314,6 @@ export function QueryPage() {
         </header>
 
         <main className="flex-1 space-y-4 overflow-y-auto px-4 py-6 sm:px-6">
-          {expiryWarning && (
-            <p className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800">
-              Your session will expire soon -- finish your question, or you'll need to log in again
-              (your typed question will be saved for you).
-            </p>
-          )}
-
           {error && <p className="text-sm text-red-600">{error}</p>}
 
           {result && <ResultPanel result={result} />}
