@@ -32,6 +32,7 @@ type Mode = "agentic" | "direct";
 
 function entryToDisplayResult(entry: HistoryEntry): DisplayResult {
   return {
+    question: entry.question,
     mode: entry.mode,
     trace: entry.trace,
     answer: entry.answer,
@@ -131,6 +132,7 @@ export function QueryPage() {
       if (mode === "direct") {
         const outcome = await runDirectQuery(query, activeSession);
         display = {
+          question: query,
           mode: "direct",
           trace: [],
           answer: outcome.text ?? "No matching results found in the knowledge base.",
@@ -141,6 +143,7 @@ export function QueryPage() {
       } else {
         const outcome = await runQuery(query, activeSession);
         display = {
+          question: query,
           mode: "agentic",
           trace: outcome.trace,
           answer:
@@ -163,6 +166,9 @@ export function QueryPage() {
         sourceFilename: display.sourceFilename,
       });
       setHistory(loadHistory());
+      // AGT-053: cleared on success only -- a failed query leaves its text in place so it's easy
+      // to retry without retyping it.
+      setQuery("");
     } catch (err) {
       if (err instanceof QueryError && err.message.includes("expired")) {
         saveDraftQuery(query);
@@ -174,6 +180,17 @@ export function QueryPage() {
     } finally {
       setLoading(false);
     }
+  }
+
+  function handleModeChange(newMode: Mode) {
+    // AGT-045: without this, switching tabs left the previous mode's result on screen, still
+    // badged with the mode you just left -- reading as "Direct RAG produced the same synthesized
+    // answer as Agentic RAG", which it never actually does (it's a single raw chunk, no
+    // synthesis). The backends were always correct; only the stale display was misleading.
+    setMode(newMode);
+    setResult(null);
+    setError(null);
+    setSelectedHistoryId(null);
   }
 
   function handleOpenHistoryEntry(entry: HistoryEntry) {
@@ -238,7 +255,7 @@ export function QueryPage() {
                 type="button"
                 role="tab"
                 aria-selected={mode === m}
-                onClick={() => setMode(m)}
+                onClick={() => handleModeChange(m)}
                 className={`border-b-2 px-3 py-1.5 text-sm font-medium transition-colors ${
                   mode === m
                     ? "border-slate-900 text-slate-900"
@@ -317,7 +334,9 @@ export function QueryPage() {
         <details className="rounded-lg border border-slate-200 bg-white px-4 py-3" open>
           <summary className="flex cursor-pointer items-center justify-between text-sm font-medium text-slate-900">
             <span>
-              Past questions, this browser only ({shownHistory.length}
+              {/* AGT-050: "this browser only" was accurate before AGT-041/044 added a server-side
+               * history table synced across devices -- left as-is it actively misleads. */}
+              Past questions ({shownHistory.length}
               {history.length > shownHistory.length ? ` of ${history.length} stored` : ""})
             </span>
             {history.length > 0 && (

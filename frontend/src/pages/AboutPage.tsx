@@ -44,8 +44,8 @@ export function AboutPage() {
           ask questions about them.
         </p>
         <p className="text-sm text-slate-600">
-          <strong>Query history</strong> shown here is stored only in this browser (not synced
-          across devices) and you can delete it any time from the query page.
+          <strong>Query history</strong> shown here is synced across your devices (the 5 most
+          recent) and you can delete it any time from the query page.
         </p>
         <Link to="/" className="text-sm text-blue-600 underline hover:text-blue-800">
           &larr; Back to login

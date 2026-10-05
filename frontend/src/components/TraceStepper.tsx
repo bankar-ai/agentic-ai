@@ -15,6 +15,17 @@ const AGENT_LABELS: Record<string, string> = {
   verifier: "Verifier",
 };
 
+/** AGT-047: a fixed, one-line description of what each agent generally does -- distinct from the
+ * one-line *summary* below, which says what it did on *this* run. Same four descriptions already
+ * on `/about`, just surfaced inline where the trace is actually being read, not on a separate
+ * page. */
+const AGENT_ROLES: Record<string, string> = {
+  gatekeeper: "decides whether to search the knowledge base, fall back to the web, or refuse",
+  research: "retrieves evidence from your enterprise-rag-platform documents",
+  writer: "drafts a cited answer from that evidence",
+  verifier: "checks the draft against the evidence, rejecting unsupported claims",
+};
+
 const AGENT_ICONS: Record<string, string> = {
   gatekeeper: "\u{1F6AA}", // door
   research: "\u{1F50D}", // magnifying glass
@@ -39,18 +50,62 @@ function summarize(step: TraceStep): string {
   }
 }
 
+interface Citation {
+  source: "knowledge_base" | "web";
+  citation: string;
+}
+
+/** AGT-046: `knowledge_base` citations show the real source filename (no public URL to link to
+ * from this app); `web` citations are real clickable links, since the citation field literally
+ * is a URL (`app/agents/web_search.py`). */
+function CitationsList({ citations }: { citations: Citation[] }) {
+  if (citations.length === 0) return null;
+  return (
+    <div className="mt-2">
+      <p className="text-xs font-medium tracking-wide text-slate-400 uppercase">Sources</p>
+      <ul className="mt-1 space-y-0.5">
+        {citations.map((c, i) => (
+          <li key={i} className="text-sm">
+            {c.source === "web" ? (
+              <a
+                href={c.citation}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-blue-600 underline hover:text-blue-800"
+              >
+                {c.citation}
+              </a>
+            ) : (
+              <span className="text-slate-700">{"\u{1F4C4}"} {c.citation}</span>
+            )}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 function StepDetail({ step }: { step: TraceStep }) {
+  const citations = Array.isArray(step.citations) ? (step.citations as Citation[]) : [];
   switch (step.agent) {
     case "gatekeeper":
       return <p className="text-sm text-slate-600">{String(step.reasoning ?? "")}</p>;
     case "research":
       return (
-        <p className="text-sm text-slate-600">
-          {String(step.evidence_count ?? "?")} evidence chunk(s) pulled from your documents.
-        </p>
+        <div>
+          <p className="text-sm text-slate-600">
+            {String(step.evidence_count ?? "?")} evidence chunk(s) pulled from your documents.
+          </p>
+          <CitationsList citations={citations} />
+        </div>
       );
     case "writer":
-      return <p className="text-sm whitespace-pre-wrap text-slate-600">{String(step.text ?? "")}</p>;
+      return (
+        <div>
+          <p className="text-sm whitespace-pre-wrap text-slate-600">{String(step.text ?? "")}</p>
+          <CitationsList citations={citations} />
+        </div>
+      );
     case "verifier": {
       const claims = Array.isArray(step.unsupported_claims) ? (step.unsupported_claims as string[]) : [];
       return (
@@ -107,9 +162,14 @@ export function TraceStepper({ trace }: { trace: TraceStep[] }) {
               </span>
               <span className="shrink-0 text-xs text-slate-400">{isOpen ? "▲" : "▼"}</span>
             </button>
-            {isOpen && <div className="mt-1 ml-8 border-l border-slate-200 pl-3">
-              <StepDetail step={step} />
-            </div>}
+            {isOpen && (
+              <div className="mt-1 ml-8 border-l border-slate-200 pl-3">
+                {AGENT_ROLES[agent] && (
+                  <p className="mb-2 text-xs text-slate-400 italic">{AGENT_ROLES[agent]}</p>
+                )}
+                <StepDetail step={step} />
+              </div>
+            )}
           </li>
         );
       })}
