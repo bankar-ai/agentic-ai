@@ -20,6 +20,8 @@ from typing import Protocol
 
 import httpx
 
+from app.core.query_cache import decode_user_id
+from app.core.session_store import SessionStore
 from app.rag_client.schemas import AuthSession
 
 
@@ -111,13 +113,23 @@ class StaticTokenAuth:
 
     Used when a caller supplies their own `enterprise-rag-platform` session (e.g. via this
     project's `Authorization`/`X-RAG-CSRF-Token` headers) instead of logging in as a service
-    account. Has no password, so it cannot actually refresh -- an expired session means the end
-    user must log in again at the RAG platform, not something this adapter can recover from.
+    account. Has no password of its own, so a *silent* refresh is only possible when a refresh
+    token for this user was captured at login and handed in here via `session_store`/`http_client`
+    (AGT-051) -- without those, an expired session still means the end user must log in again,
+    same as before AGT-051.
     """
 
-    def __init__(self, access_token: str, csrf_token: str) -> None:
+    def __init__(
+        self,
+        access_token: str,
+        csrf_token: str,
+        session_store: SessionStore | None = None,
+        http_client: httpx.AsyncClient | None = None,
+    ) -> None:
         self._access_token = access_token
         self._csrf_token = csrf_token
+        self._session_store = session_store
+        self._http = http_client
 
     async def get_access_token(self) -> str:
         return self._access_token
@@ -126,4 +138,51 @@ class StaticTokenAuth:
         return self._csrf_token
 
     async def refresh(self) -> tuple[str, str]:
+        """AGT-051: if this instance was built with a `session_store`/`http_client` (i.e. the
+        caller forwarded them, which every real request path does -- see `app/api/router.py`),
+        attempt a real silent refresh using whatever refresh token was captured at login. Falls
+        back to the original "please log in again" error in every case that isn't a clean
+        success: no store/client wired in, no stored token for this user, decode failure, or the
+        platform itself rejecting the stored token (e.g. it was revoked) -- a stale/invalid
+        refresh token is deleted so the next attempt doesn't keep retrying a dead credential.
+        """
+        if self._session_store is not None and self._http is not None:
+            new_tokens = await self._try_silent_refresh()
+            if new_tokens is not None:
+                return new_tokens
         raise RagPlatformAuthError("Supplied session expired or was rejected; please log in again.")
+
+    async def _try_silent_refresh(self) -> tuple[str, str] | None:
+        assert self._session_store is not None and self._http is not None
+        user_id = decode_user_id(self._access_token)
+        if user_id is None:
+            return None
+        refresh_token = await self._session_store.get_refresh_token(user_id)
+        if refresh_token is None:
+            return None
+        response = await self._http.post(
+            "/auth/refresh",
+            headers={
+                "X-CSRF-Token": self._csrf_token,
+                "Cookie": f"refresh_token={refresh_token}; csrf_token={self._csrf_token}",
+            },
+        )
+        if response.status_code != 200:
+            # The stored refresh token itself is dead (expired/revoked server-side) -- clean it
+            # up so the next request fails fast into the normal "log in again" path instead of
+            # retrying a credential that will never work again.
+            await self._session_store.delete(user_id)
+            return None
+        new_access_token = response.cookies.get("access_token")
+        new_refresh_token = response.cookies.get("refresh_token")
+        if not new_access_token:
+            return None
+        new_csrf_token = AuthSession(**response.json()).csrf_token
+        if new_refresh_token:
+            # ERP-116-style refresh rotation: the old refresh token may already be invalidated by
+            # this call, so the stored value must be updated to the new one or the *next* refresh
+            # attempt would fail even though this one just succeeded.
+            await self._session_store.save_refresh_token(user_id, new_refresh_token)
+        self._access_token = new_access_token
+        self._csrf_token = new_csrf_token
+        return self._access_token, self._csrf_token

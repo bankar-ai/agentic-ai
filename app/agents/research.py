@@ -36,7 +36,11 @@ from app.agents.web_search import search_web
 from app.core.telemetry import get_tracer
 
 _KB_TOOL_NAME = "search_knowledge_base"
-_FORWARDED_ENV_PREFIXES = ("RAG_PLATFORM_",)
+# AGT-051: DATABASE_URL (exact string, not a prefix -- `str.startswith` still matches it fine) is
+# forwarded so the MCP subprocess's own StaticTokenAuth (app/mcp_server/server.py's _build_auth)
+# can silently refresh an expired kb-route session, same as the endpoints that talk to
+# RagPlatformRetrievalClient directly.
+_FORWARDED_ENV_PREFIXES = ("RAG_PLATFORM_", "DATABASE_URL")
 # app/agents/research.py -> repo root, so the child resolves `app.*` and finds `.env` regardless
 # of the parent process's working directory.
 _REPO_ROOT = Path(__file__).resolve().parents[2]

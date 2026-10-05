@@ -21,6 +21,8 @@ from datetime import UTC, datetime, timedelta
 import asyncpg
 from pydantic import BaseModel
 
+from app.core.db import get_pool
+
 CACHE_TTL = timedelta(hours=24)
 
 _SCHEMA = """
@@ -199,20 +201,22 @@ class QueryCache:
         )
 
 
-_pool: asyncpg.Pool | None = None
+_schema_ready = False
 
 
 async def get_query_cache(database_url: str | None) -> QueryCache | None:
-    """Lazily creates the connection pool (and the table, idempotently) on first real use --
-    never at import time or on `/health`, so a cold Cloud Run instance that never actually serves
-    a `/query` call never opens a database connection at all. Returns `None` when `DATABASE_URL`
-    isn't configured, making caching/history an opt-in capability, not a hard dependency.
+    """Lazily creates this table (idempotently, on the process-wide shared pool -- see
+    `app/core/db.py`) on first real use, never at import time or on `/health`, so a cold Cloud Run
+    instance that never actually serves a `/query` call never opens a database connection at all.
+    Returns `None` when `DATABASE_URL` isn't configured, making caching/history an opt-in
+    capability, not a hard dependency.
     """
-    global _pool
-    if not database_url:
+    global _schema_ready
+    pool = await get_pool(database_url)
+    if pool is None:
         return None
-    if _pool is None:
-        _pool = await asyncpg.create_pool(database_url, min_size=1, max_size=5)
-        async with _pool.acquire() as conn:
+    if not _schema_ready:
+        async with pool.acquire() as conn:
             await conn.execute(_SCHEMA)
-    return QueryCache(_pool)
+        _schema_ready = True
+    return QueryCache(pool)

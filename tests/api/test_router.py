@@ -169,7 +169,11 @@ def test_query_endpoint_passes_user_session_to_get_graph_when_logged_in():
             headers={"Authorization": "Bearer user-token-123", "X-RAG-CSRF-Token": "user-csrf-456"},
         )
 
-    mock_get_graph.assert_called_once_with(UserSession(access_token="user-token-123", csrf_token="user-csrf-456"))
+    # AGT-051: get_graph also receives a session_store (None in this test env, since
+    # DATABASE_URL isn't configured) -- positional, not a kwarg the old assertion would still match.
+    mock_get_graph.assert_called_once_with(
+        UserSession(access_token="user-token-123", csrf_token="user-csrf-456"), None
+    )
 
 
 def test_query_endpoint_does_not_call_get_graph_when_not_logged_in():
