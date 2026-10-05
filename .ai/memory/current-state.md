@@ -319,13 +319,34 @@ History belongs in `.ai/sessions/`, not here.
   `AGT-026`'s now-misleading "session will expire soon" warning (it would have fired without the
   user ever actually needing to log in again, post-`AGT-051`) was replaced, not left running
   alongside the new check -- `jwt.ts` deleted as fully dead code once its only caller was gone.
+- **Four real security guardrail gaps found and closed (`AGT-056`-`059`, 2026-10-05)**: the
+  project owner asked directly whether secrets-leak scanning, abuse/toxicity filtering, rate
+  limiting, and multi-tenant isolation existed. Honest audit found none of the first three did at
+  all. Built all four same day: `AGT-056` (pattern-based secret scanner -- AWS/GitHub/Slack
+  tokens, PEM headers, JWTs -- overrides a flagged answer to refused in both query endpoints);
+  `AGT-057` (basic keyword content filter, checked before the pipeline runs on input and again on
+  output, explicitly documented as a heuristic not a full moderation system); `AGT-058` (per-user
+  rate limiting, 20 req/10 min, Postgres-backed so it's correct across Cloud Run's multiple
+  instances -- **live-verified with a real 25-request burst against production**: requests 1-19
+  succeeded, 20+ correctly got `429`). **`AGT-059` (RLS) found and fixed a real bug along the
+  way**: `ENABLE`/`FORCE ROW LEVEL SECURITY` looked correctly configured (confirmed via
+  `pg_class`), but a live isolation test showed every `app.current_user_id` value -- unset, the
+  real user, a fake user -- returning the exact same rows. Root cause: `neondb_owner` (the only
+  role this app had ever connected as) has `rolbypassrls = true`, Neon's default for a project's
+  primary role -- an attribute that bypasses RLS unconditionally, which `FORCE` has no power over.
+  Fixed by creating a dedicated `NOBYPASSRLS` role (`agentic_ai_app`), transferring table
+  ownership to it (so FORCE RLS actually applies, while the app can still run its own schema-init
+  DDL as the owner), and switching `DATABASE_URL` to it (Secret Manager version 2, Cloud Run
+  revision `agentic-ai-00042-dsf`). Re-verified post-fix through the real application classes,
+  not just raw SQL: unscoped `0` rows, real-user-scoped `41` rows, fake-user-scoped `0` rows --
+  genuine enforced isolation, not just a correctly-worded policy that happened to do nothing.
 
 ## Known Gaps / Follow-ups
 
 Tracked as tickets in `.ai/tickets/` rather than duplicated here in full — this section is a quick
 index, read the ticket for detail.
 
-Every `AGT-*` ticket (`001`-`055`) is resolved — `AGT-019` is
+Every `AGT-*` ticket (`001`-`059`) is resolved — `AGT-019` is
 **Won't Do** (see below), everything else **Done**. See each ticket for detail; `AGT-008`/`AGT-009`/`AGT-012` (2026-10-03/04) landed
 together with a real concurrency bug found and fixed along the way (`StaticTokenAuth` was unsafe
 to share across concurrent different-user requests); `AGT-011` (2026-10-04) added
